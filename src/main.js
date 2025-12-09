@@ -4,6 +4,8 @@ import { Bullet } from './Bullet.js';
 import { Enemy } from './Enemy.js';
 import { Particle } from './Particle.js';
 import { Pickup } from './Pickup.js';
+import { DamagePopup } from './DamagePopup.js';
+import { SoundManager } from './SoundManager.js';
 
 const CONFIG = {
   viewSize: 15,
@@ -30,6 +32,8 @@ let zombiesSpawned = 0;
 let zombiesKilledInWave = 0;
 let spawnRate = 2.0;
 let pickups = [];
+let damagePopups = [];
+let soundManager;
 
 init();
 animate();
@@ -38,6 +42,9 @@ function init() {
   scene = new THREE.Scene();
   scene.background = new THREE.Color(0xad8a6c);
   clock = new THREE.Clock();
+
+  // Ses sistemi başlat
+  soundManager = new SoundManager();
 
   const aspect = window.innerWidth / window.innerHeight;
   camera = new THREE.OrthographicCamera(
@@ -86,6 +93,16 @@ function init() {
   setupInputs();
   window.addEventListener('resize', onWindowResize);
   updateUI();
+  updateWeaponUI();
+  
+  // Silah slotlarına tıklama
+  document.querySelectorAll('.weapon-slot').forEach(slot => {
+    slot.onclick = () => {
+      const weaponType = slot.getAttribute('data-weapon');
+      player.switchWeapon(weaponType);
+      updateWeaponUI();
+    };
+  });
 }
 
 function createWalls() {
@@ -140,11 +157,34 @@ function setupInputs() {
 
   window.addEventListener('keydown', (e) => {
     inputs[e.key] = true;
+    
     if (e.key === 'Escape') {
       togglePause();
       return;
     }
+    
+    // Silah değiştirme (1-2-3-4)
+    if (e.key === '1') {
+      player.switchWeapon('pistol');
+      updateWeaponUI();
+    }
+    if (e.key === '2') {
+      player.switchWeapon('shotgun');
+      updateWeaponUI();
+    }
+    if (e.key === '3') {
+      player.switchWeapon('rifle');
+      updateWeaponUI();
+    }
+    if (e.key === '4') {
+      player.switchWeapon('sniper');
+      updateWeaponUI();
+    }
+
     if ((e.key === 'r' || e.key === 'R') && player && !isPaused) {
+      if (!player.isReloading) {
+        soundManager.playReloadSound();
+      }
       player.reload();
       updateUI();
     }
@@ -170,8 +210,32 @@ function setupInputs() {
           .normalize();
         direction.y = 0;
 
-        const bullet = new Bullet(scene, spawnPos, direction);
-        bullets.push(bullet);
+        // Silah özelliklerini al
+        const weapon = player.getWeapon();
+        
+        // 🔊 ATEŞ SESİ
+        soundManager.playShootSound(player.currentWeapon);
+        
+        // Pompalı için 4 mermi (bulletCount)
+        const bulletCount = weapon.bulletCount || 1;
+        
+        for (let i = 0; i < bulletCount; i++) {
+          // Her mermi için yön hesapla (spread varsa)
+          const spreadAngle = weapon.bulletSpread || 0;
+          const randomSpread = (Math.random() - 0.5) * spreadAngle;
+          
+          const bulletDir = direction.clone();
+          bulletDir.applyAxisAngle(new THREE.Vector3(0, 1, 0), randomSpread);
+          
+          // Mermiyi silah özellikleriyle oluştur
+          const bullet = new Bullet(scene, spawnPos, bulletDir, {
+            damage: weapon.damage,
+            speed: weapon.bulletSpeed,
+            color: weapon.bulletColor,
+            size: weapon.bulletSize
+          });
+          bullets.push(bullet);
+        }
 
         const flash = new THREE.PointLight(0xffff00, 2, 10);
         flash.position.copy(spawnPos);
@@ -268,19 +332,31 @@ function animate() {
 
     if (distToPlayer < attackRange) {
       if (!enemy.lastAttackTime || clock.getElapsedTime() - enemy.lastAttackTime > 1.0) {
+        console.log(`Zombi saldırdı! Hasar: ${damage}, Eski can: ${player.health}`);
+        
+        // 🔊 OYUNCU HASAR SESİ
+        soundManager.playPlayerHurt();
+        
         player.takeDamage(damage);
+        console.log(`Yeni can: ${player.health}`);
         enemy.lastAttackTime = clock.getElapsedTime();
 
-        const originalColor = enemy.mesh.material.color.getHex();
-        enemy.mesh.material.color.setHex(0xff0000);
-        setTimeout(() => {
-          if (enemy.isAlive) enemy.mesh.material.color.setHex(originalColor);
-        }, 100);
+        const originalColor = enemy.mesh.material ? enemy.mesh.material.color.getHex() : 0x558b2f;
+        if (enemy.body && enemy.body.material) {
+          enemy.body.material.color.setHex(0xff0000);
+          setTimeout(() => {
+            if (enemy.isAlive && enemy.body && enemy.body.material) {
+              enemy.body.material.color.setHex(originalColor);
+            }
+          }, 100);
+        }
 
         updateUI();
 
         if (player.isDead) {
           isGameOver = true;
+          // 🔊 GAME OVER SESİ
+          soundManager.playGameOver();
           showGameOver();
         }
       }
@@ -290,6 +366,12 @@ function animate() {
   for (let i = bullets.length - 1; i >= 0; i--) {
     const b = bullets[i];
     b.update(dt);
+    
+    if (!b.isAlive) {
+      bullets.splice(i, 1);
+      continue;
+    }
+    
     let hitSomething = false;
 
     for (let j = enemies.length - 1; j >= 0; j--) {
@@ -298,13 +380,51 @@ function animate() {
         enemies.splice(j, 1);
         continue;
       }
-      const hitRadius = enemy.mesh.scale.x * 0.8;
+      
+      // Mermi ve zombi arasındaki mesafe
+      const bulletPos = b.mesh.position;
+      const enemyPos = enemy.mesh.position;
+      const distance = bulletPos.distanceTo(enemyPos);
+      
+      // Runner için daha büyük hitbox
+      let hitRadius = 1.5;
+      if (enemy.type === 'runner') {
+        hitRadius = 2.0; // Runner küçük ama hitbox büyük
+      } else {
+        hitRadius = 1.5 * enemy.mesh.scale.x;
+      }
+      
+      // Her 30 frame'de bir log (spam olmasın)
+      if (Math.random() < 0.03) {
+        console.log(`${enemy.type}: Mesafe: ${distance.toFixed(2)}, Radius: ${hitRadius.toFixed(2)}`);
+      }
 
-      if (b.mesh.position.distanceTo(enemy.mesh.position) < hitRadius) {
-        enemy.takeDamage();
+      if (distance < hitRadius) {
+        // ⚡ KRİTİK VURUŞ SİSTEMİ - %5 şans, 4x hasar
+        const isCritical = Math.random() < 0.05;
+        const baseDamage = b.damage;
+        const finalDamage = isCritical ? baseDamage * 4 : baseDamage;
+        
+        console.log(`💥 ${isCritical ? '⚡ KRİTİK! ' : ''}${enemy.type} vuruldu! Hasar: ${finalDamage} (Base: ${baseDamage})`);
+        
+        // 🔊 KRİTİK VURUŞ SESİ
+        if (isCritical) {
+          soundManager.playCriticalHit();
+        }
+        
+        // Hasar popupı oluştur
+        const popup = new DamagePopup(scene, enemy.mesh.position, finalDamage, isCritical);
+        damagePopups.push(popup);
+        
+        // Hasarı uygula
+        enemy.takeDamage(finalDamage);
+        
         hitSomething = true;
 
         if (!enemy.isAlive) {
+          // 🔊 ZOMBİ ÖLÜM SESİ
+          soundManager.playZombieDeath();
+          
           createExplosion(enemy.mesh.position, 0x8d6e63);
           tryDropPickup(enemy.mesh.position);
           score += 10;
@@ -316,7 +436,7 @@ function animate() {
       }
     }
 
-    if (hitSomething || !b.isAlive) {
+    if (hitSomething) {
       b.kill();
       bullets.splice(i, 1);
     }
@@ -330,9 +450,21 @@ function animate() {
     }
   }
 
+  // Hasar popuplarını güncelle
+  for (let i = damagePopups.length - 1; i >= 0; i--) {
+    const popup = damagePopups[i];
+    popup.update(dt);
+    if (!popup.isAlive) {
+      damagePopups.splice(i, 1);
+    }
+  }
+
   for (let i = pickups.length - 1; i >= 0; i--) {
     const p = pickups[i];
-    p.update(dt, player);
+    p.update(dt, player, (type) => {
+      // 🔊 PICKUP SESİ
+      soundManager.playPickupSound(type);
+    });
     if (!p.isAlive) {
       pickups.splice(i, 1);
       updateUI();
@@ -386,20 +518,48 @@ function spawnEnemy() {
 }
 
 function updateUI() {
-  document.getElementById('health-bar').style.width = (player.health / player.maxHealth) * 100 + '%';
+  if (!player) return;
   
-  const ammoDiv = document.getElementById('ammo-text');
-  if (player.isReloading) {
-    ammoDiv.innerText = "DOLDURULUYOR...";
-    ammoDiv.style.color = "#ff0000";
-  } else {
-    ammoDiv.innerText = `MERMİ: ${player.ammo} / ∞`;
-    ammoDiv.style.color = "#ffd700";
+  const healthBar = document.getElementById('health-bar');
+  if (healthBar) {
+    const healthPercent = (player.health / player.maxHealth) * 100;
+    healthBar.style.width = healthPercent + '%';
   }
   
-  document.getElementById('score-box').innerText = score;
-  const remaining = waveZombieCount - zombiesKilledInWave;
-  document.getElementById('wave-info').innerText = `DALGA: ${wave} | 🧟 KALAN: ${remaining}`;
+  const ammoDiv = document.getElementById('ammo-text');
+  if (ammoDiv) {
+    const weapon = player.getWeapon();
+    if (player.isReloading) {
+      ammoDiv.innerText = "DOLDURULUYOR...";
+      ammoDiv.style.color = "#ff0000";
+    } else {
+      ammoDiv.innerText = `${weapon.name.toUpperCase()}: ${player.ammo}/${weapon.clipSize}`;
+      ammoDiv.style.color = "#ffd700";
+    }
+  }
+  
+  const scoreBox = document.getElementById('score-box');
+  if (scoreBox) {
+    scoreBox.innerText = score;
+  }
+  
+  const waveInfo = document.getElementById('wave-info');
+  if (waveInfo) {
+    const remaining = waveZombieCount - zombiesKilledInWave;
+    waveInfo.innerText = `DALGA: ${wave} | 🧟 KALAN: ${remaining}`;
+  }
+}
+
+function updateWeaponUI() {
+  const slots = document.querySelectorAll('.weapon-slot');
+  slots.forEach(slot => {
+    const weaponType = slot.getAttribute('data-weapon');
+    if (weaponType === player.currentWeapon) {
+      slot.classList.add('active');
+    } else {
+      slot.classList.remove('active');
+    }
+  });
 }
 
 function showGameOver() {
@@ -408,6 +568,9 @@ function showGameOver() {
 }
 
 function startNextWave() {
+  // 🔊 WAVE TAMAMLANDI SESİ
+  soundManager.playWaveComplete();
+  
   // Popup göster
   showWaveComplete();
   
@@ -439,8 +602,12 @@ function showWaveComplete() {
 
 function createExplosion(position, color) {
   for (let i = 0; i < 15; i++) {
-    const p = new Particle(scene, position, color);
-    particles.push(p);
+    try {
+      const p = new Particle(scene, position, color);
+      particles.push(p);
+    } catch (err) {
+      console.warn('Particle oluşturulamadı:', err);
+    }
   }
 }
 

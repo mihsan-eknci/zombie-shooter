@@ -28,7 +28,7 @@ export class Pickup {
         scene.add(this.mesh);
     }
 
-    update(dt, player) {
+    update(dt, player, onCollect) {
         // Kendi etrafında dönsün (Dikkat çeksin)
         this.mesh.rotation.y += 2.0 * dt;
         this.mesh.rotation.x += 1.0 * dt;
@@ -39,11 +39,11 @@ export class Pickup {
         // OYUNCU İLE ÇARPIŞMA KONTROLÜ
         // Eğer oyuncu kutuya çok yakınsa (1.0 birim)
         if (this.mesh.position.distanceTo(player.getPosition()) < 1.0) {
-            this.collect(player);
+            this.collect(player, onCollect);
         }
     }
 
-    collect(player) {
+    collect(player, onCollect) {
         if (this.type === 'health') {
             // Canı 20 artır (Maksimumu geçmesin)
             player.health = Math.min(player.maxHealth, player.health + 20);
@@ -54,6 +54,11 @@ export class Pickup {
             // Eğer yedek mermi mantığımız yoksa direkt şarjöre ekliyoruz.
             // İstersen player.ammo = Math.min(player.clipSize, player.ammo + 30) yapabilirsin.
             console.log("Mermi toplandı!");
+        }
+
+        // Callback çağır (ses çalmak için)
+        if (onCollect) {
+            onCollect(this.type);
         }
 
         // UI Güncellemek için bir yol bulmamız lazım ama şimdilik main.js halledecek

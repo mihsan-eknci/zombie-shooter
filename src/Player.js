@@ -4,109 +4,257 @@ import * as THREE from 'three';
 export class Player {
     constructor(scene) {
         this.scene = scene;
-        this.speed = 10; // Hareket hızı
+        this.speed = 10;
         this.maxHealth = 100;
         this.health = 100;
         this.isDead = false;
-        // --- ŞARJÖR AYARLARI ---
-        this.clipSize = 30;      // Bir şarjör kaç mermi alıyor?
-        this.ammo = 30;          // Şu anki mermi
-        this.reloadTime = 1.5;   // Şarjör değiştirme süresi (saniye)
-        this.isReloading = false; // Şu an değiştiriyor mu?
 
-        // Karakter Grubu (Gövde + Kafa + Silah)
+        console.log('ðŸŽ¯ Player.js YÃœKLENDI - VERSION 2.0');
+
+        // --- SÄ°LAH SÄ°STEMÄ° ---
+        this.weapons = {
+            pistol: {
+                name: 'Desert Eagle',
+                damage: 10,
+                clipSize: 15,
+                reloadTime: 1.5,
+                fireRate: 0.4,
+                bulletCount: 1,
+                bulletSpread: 0,
+                bulletSpeed: 50,
+                bulletColor: 0xffd700,
+                bulletSize: 0.25,
+                color: 0x708090,
+                size: { w: 0.12, h: 0.12, l: 0.8 }
+            },
+            shotgun: {
+                name: 'PompalÄ±',
+                damage: 7,
+                clipSize: 8,
+                reloadTime: 2.5,
+                fireRate: 1.0,
+                bulletCount: 4,
+                bulletSpread: 0.6,
+                bulletSpeed: 35,
+                bulletColor: 0xff8c00,
+                bulletSize: 0.35,
+                color: 0x8b4513,
+                size: { w: 0.15, h: 0.15, l: 1.0 }
+            },
+            rifle: {
+                name: 'AK-47',
+                damage: 4,
+                clipSize: 30,
+                reloadTime: 2.0,
+                fireRate: 0.08,
+                bulletCount: 1,
+                bulletSpread: 0.05,
+                bulletSpeed: 60,
+                bulletColor: 0xff4500,
+                bulletSize: 0.2,
+                color: 0x2a2a2a,
+                size: { w: 0.13, h: 0.13, l: 1.2 }
+            },
+            sniper: {
+                name: 'AWP',
+                damage: 40,
+                clipSize: 5,
+                reloadTime: 3.0,
+                fireRate: 2.0,
+                bulletCount: 1,
+                bulletSpread: 0,
+                bulletSpeed: 100,
+                bulletColor: 0x00bfff,
+                bulletSize: 0.3,
+                color: 0x654321,
+                size: { w: 0.10, h: 0.10, l: 1.5 }
+            }
+        };
+
+        this.currentWeapon = 'pistol';
+        this.ammo = this.weapons.pistol.clipSize;
+        this.isReloading = false;
+        this.lastShotTime = 0;
+
+        console.log('âœ… Silahlar yÃ¼klendi!');
+        console.log('ðŸ“Š Pistol hasar:', this.weapons.pistol.damage);
+        console.log('ðŸ“Š Pistol bulletSpeed:', this.weapons.pistol.bulletSpeed);
+        console.log('ðŸ“Š Pistol bulletColor:', this.weapons.pistol.bulletColor);
+
+        // --- MODEL OLUÅžTURMA ---
         this.mesh = new THREE.Group();
 
-        // Gövde
-        const bodyGeo = new THREE.BoxGeometry(1, 1.8, 0.5);
-        const bodyMat = new THREE.MeshLambertMaterial({ color: 0x4caf50 });
+        const skinColor = 0xffccaa;
+        const shirtColor = 0x0088ff;
+        const pantsColor = 0x1a237e;
+
+        const bodyGeo = new THREE.BoxGeometry(0.6, 0.7, 0.3);
+        const bodyMat = new THREE.MeshLambertMaterial({ color: shirtColor });
         this.body = new THREE.Mesh(bodyGeo, bodyMat);
-        this.body.position.y = 0.9;
+        this.body.position.y = 1.0;
         this.body.castShadow = true;
         this.mesh.add(this.body);
 
-        // Silah (Nereye baktığını görmek için şart)
-        const gunGeo = new THREE.BoxGeometry(0.2, 0.2, 1.5);
-        const gunMat = new THREE.MeshLambertMaterial({ color: 0x111111 });
-        this.gun = new THREE.Mesh(gunGeo, gunMat);
-        this.gun.position.set(0.3, 1.2, 0.5); // Sağ elde ve öne doğru
-        this.gun.castShadow = true;
-        this.mesh.add(this.gun);
+        const headGeo = new THREE.BoxGeometry(0.5, 0.5, 0.5);
+        const headMat = new THREE.MeshLambertMaterial({ color: skinColor });
+        this.head = new THREE.Mesh(headGeo, headMat);
+        this.head.position.y = 0.6;
+        this.head.castShadow = true;
+        this.body.add(this.head);
 
-        // Sahneye ekle
+        this.rightArmPivot = new THREE.Group();
+        this.rightArmPivot.position.set(0.45, 0.3, 0);
+        this.body.add(this.rightArmPivot);
+
+        const armGeo = new THREE.BoxGeometry(0.2, 0.7, 0.2);
+        const armMat = new THREE.MeshLambertMaterial({ color: skinColor });
+        this.rightArm = new THREE.Mesh(armGeo, armMat);
+        this.rightArm.position.y = -0.35;
+        this.rightArm.castShadow = true;
+        this.rightArmPivot.add(this.rightArm);
+
+        const gunGeo = new THREE.BoxGeometry(0.12, 0.12, 0.8);
+        const gunMat = new THREE.MeshLambertMaterial({ color: this.weapons.pistol.color });
+        this.gun = new THREE.Mesh(gunGeo, gunMat);
+        this.gun.position.set(0.1, -0.25, 0.6);
+        this.gun.rotation.x = Math.PI / 12;
+        this.rightArmPivot.add(this.gun);
+
+        this.leftArmPivot = new THREE.Group();
+        this.leftArmPivot.position.set(-0.45, 0.3, 0);
+        this.body.add(this.leftArmPivot);
+
+        this.leftArm = new THREE.Mesh(armGeo, armMat.clone());
+        this.leftArm.position.y = -0.35;
+        this.leftArm.castShadow = true;
+        this.leftArmPivot.add(this.leftArm);
+
+        this.rightLegPivot = new THREE.Group();
+        this.rightLegPivot.position.set(0.15, -0.35, 0);
+        this.body.add(this.rightLegPivot);
+
+        const legGeo = new THREE.BoxGeometry(0.25, 0.7, 0.25);
+        const legMat = new THREE.MeshLambertMaterial({ color: pantsColor });
+        this.rightLeg = new THREE.Mesh(legGeo, legMat);
+        this.rightLeg.position.y = -0.35;
+        this.rightLeg.castShadow = true;
+        this.rightLegPivot.add(this.rightLeg);
+
+        this.leftLegPivot = new THREE.Group();
+        this.leftLegPivot.position.set(-0.15, -0.35, 0);
+        this.body.add(this.leftLegPivot);
+
+        this.leftLeg = new THREE.Mesh(legGeo, legMat.clone());
+        this.leftLeg.position.y = -0.35;
+        this.leftLeg.castShadow = true;
+        this.leftLegPivot.add(this.leftLeg);
+
         scene.add(this.mesh);
     }
 
-    update(dt, inputs) {
-        // --- HAREKET MANTIĞI ---
-        const moveDir = new THREE.Vector3(0, 0, 0);
+    getWeapon() {
+        return this.weapons[this.currentWeapon];
+    }
 
-        // Türkçe klavye uyumu için hem küçük hem büyük harf kontrolü veya KeyCode kullanımı
+    switchWeapon(weaponName) {
+        if (this.weapons[weaponName] && weaponName !== this.currentWeapon) {
+            this.currentWeapon = weaponName;
+            const weapon = this.weapons[weaponName];
+            this.ammo = weapon.clipSize;
+            this.isReloading = false;
+            
+            this.gun.material.color.setHex(weapon.color);
+            this.gun.geometry.dispose();
+            this.gun.geometry = new THREE.BoxGeometry(weapon.size.w, weapon.size.h, weapon.size.l);
+            
+            console.log(`âœ… ${weapon.name} seÃ§ildi! Hasar: ${weapon.damage}, ÅžarjÃ¶r: ${weapon.clipSize}`);
+        }
+    }
+
+    update(dt, inputs) {
+        if (this.isDead) return;
+
+        const moveDir = new THREE.Vector3(0, 0, 0);
         if (inputs['w'] || inputs['W']) moveDir.z -= 1;
         if (inputs['s'] || inputs['S']) moveDir.z += 1;
         if (inputs['a'] || inputs['A']) moveDir.x -= 1;
         if (inputs['d'] || inputs['D']) moveDir.x += 1;
 
-        // Vektör varsa hareket et
         if (moveDir.length() > 0) {
-            moveDir.normalize(); // Çapraz gidince hızlanmayı önler
-
-            // dt (delta time) ile çarparak her bilgisayarda aynı hızda gitmesini sağla
+            moveDir.normalize();
             this.mesh.position.x += moveDir.x * this.speed * dt;
             this.mesh.position.z += moveDir.z * this.speed * dt;
 
-            // Ufak bir yaylanma efekti (Yürürken sallanma)
-            this.mesh.position.y = Math.sin(Date.now() * 0.015) * 0.1;
+            const time = Date.now() * 0.015;
+            const angle = Math.sin(time) * 0.5;
+
+            this.rightLegPivot.rotation.x = angle;
+            this.leftLegPivot.rotation.x = -angle;
+            this.rightArmPivot.rotation.x = 0;
+            this.leftArmPivot.rotation.x = angle * 0.5;
+        } else {
+            this.rightLegPivot.rotation.x = 0;
+            this.leftLegPivot.rotation.x = 0;
+            this.leftArmPivot.rotation.x = 0;
+            this.rightArmPivot.rotation.x = 0;
         }
     }
 
-    // Sınıfın içine (update fonksiyonunun altına) yeni bir metod ekle:
     takeDamage(amount) {
         if (this.isDead) return;
-
         this.health -= amount;
-
-        // Can 0'ın altına düşmesin
+        
+        this.body.material.color.setHex(0xff0000);
+        setTimeout(() => {
+            if (!this.isDead) this.body.material.color.setHex(0x0088ff);
+        }, 100);
+        
         if (this.health <= 0) {
             this.health = 0;
             this.isDead = true;
-            // Ölünce karakteri kırmızı yapalım veya yere yatıralım
-            this.body.material.color.setHex(0x555555); // Griye dönsün
+            this.mesh.rotation.x = -Math.PI / 2;
+            this.mesh.position.y = 0.2;
+            this.body.material.color.setHex(0x555555);
         }
     }
 
-    // Ateş edebilir miyiz kontrolü
-    canShoot() {
-        return this.ammo > 0 && !this.isReloading && !this.isDead;
+    canShoot() { 
+        const weapon = this.getWeapon();
+        const currentTime = Date.now() / 1000;
+        const timeSinceLastShot = currentTime - this.lastShotTime;
+        
+        return this.ammo > 0 && 
+               !this.isReloading && 
+               !this.isDead && 
+               timeSinceLastShot >= weapon.fireRate;
     }
-
-    // Ateş edince mermiyi düş
-    shoot() {
+    
+    shoot() { 
         this.ammo--;
+        this.lastShotTime = Date.now() / 1000;
     }
-
-    // Şarjör Değiştirme (Reload)
+    
     reload() {
-        if (this.isReloading || this.ammo === this.clipSize) return; // Zaten doluyken veya değiştirirken yapma
-
+        const weapon = this.getWeapon();
+        if (this.isReloading || this.ammo === weapon.clipSize) return;
         this.isReloading = true;
-        console.log("Şarjör değiştiriliyor...");
-
-        // Basit bir zamanlayıcı (setTimeout yerine oyun döngüsünde de yapılabilir ama bu daha pratik)
+        
+        const originalRot = this.rightArmPivot.rotation.x;
+        this.rightArmPivot.rotation.x = 0;
+        
         setTimeout(() => {
-            this.ammo = this.clipSize; // Mermiyi fulle
+            this.ammo = weapon.clipSize;
             this.isReloading = false;
-            console.log("Şarjör dolu!");
-        }, this.reloadTime * 1000); // Saniyeyi milisaniyeye çevir
+            this.rightArmPivot.rotation.x = originalRot;
+        }, weapon.reloadTime * 1000);
     }
 
-    // Karakterin mouse'a bakması
     lookAt(targetPoint) {
+        if(this.isDead) return;
         this.mesh.lookAt(targetPoint.x, this.mesh.position.y, targetPoint.z);
     }
 
-    // Pozisyonu dışarıdan okumak için
-    getPosition() {
-        return this.mesh.position;
+    getPosition() { 
+        return this.mesh.position; 
     }
 }
