@@ -5,7 +5,6 @@ body {
   user-select: none;
   background: #222;
   cursor: crosshair;
-  /* Şimdilik basit imleç */
 }
 
 #ui-layer {
@@ -16,8 +15,6 @@ body {
   height: 100%;
   pointer-events: none;
 }
-
-/* ... Senin diğer CSS kodların buraya ... */
 
 .status-box {
   position: absolute;
@@ -40,6 +37,14 @@ body {
   transition: width 0.2s;
 }
 
+#wave-info {
+  margin-top: 10px;
+  font-size: 18px;
+  color: #ff9800;
+  font-weight: bold;
+  text-shadow: 0 0 10px rgba(255, 152, 0, 0.8);
+}
+
 #score-box {
   position: absolute;
   top: 20px;
@@ -47,8 +52,123 @@ body {
   color: gold;
   font-size: 30px;
   font-weight: bold;
+  text-shadow: 0 0 10px rgba(255, 215, 0, 0.8);
 }
 
+/* WAVE POPUP */
+#wave-complete {
+  display: none;
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 1000;
+}
+
+.wave-complete-content {
+  background: linear-gradient(135deg, #ff9800, #ff5722);
+  border: 4px solid #ffd700;
+  border-radius: 15px;
+  padding: 40px 60px;
+  box-shadow: 0 0 40px rgba(255, 215, 0, 0.8);
+  animation: popupBounce 0.5s ease-out;
+  min-width: 300px;
+}
+
+@keyframes popupBounce {
+  0% { transform: scale(0); opacity: 0; }
+  50% { transform: scale(1.1); }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+.wave-complete-content h2 {
+  color: white;
+  font-size: 32px;
+  margin: 0 0 20px 0;
+  text-shadow: 0 0 20px #000;
+  text-align: center;
+  letter-spacing: 2px;
+}
+
+.next-wave {
+  color: #fff3e0;
+  font-size: 20px;
+  font-weight: bold;
+  text-align: center;
+  margin: 15px 0;
+}
+
+#next-wave-num {
+  color: #ffd700;
+  font-size: 36px;
+  text-shadow: 0 0 15px #ffd700;
+  display: block;
+  margin-top: 5px;
+}
+
+.reward {
+  color: #4caf50;
+  font-size: 18px;
+  font-weight: bold;
+  text-align: center;
+  background: rgba(0, 0, 0, 0.4);
+  padding: 8px 20px;
+  border-radius: 8px;
+  margin-top: 15px;
+  text-shadow: 0 0 10px #4caf50;
+}
+
+/* PAUSE MENÜ */
+#pause-menu {
+  display: none;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(0, 0, 0, 0.95);
+  color: #ffd700;
+  padding: 50px 80px;
+  border: 4px solid #ffd700;
+  border-radius: 10px;
+  pointer-events: auto;
+  text-align: center;
+  box-shadow: 0 0 50px rgba(255, 215, 0, 0.5);
+}
+
+#pause-menu h1 {
+  font-size: 48px;
+  margin: 0 0 10px 0;
+  text-shadow: 0 0 20px #ffd700;
+  letter-spacing: 5px;
+}
+
+#pause-menu button {
+  padding: 15px 40px;
+  font-size: 20px;
+  margin: 10px;
+  cursor: pointer;
+  background: linear-gradient(135deg, #ffd700, #ffed4e);
+  color: #000;
+  border: none;
+  border-radius: 5px;
+  font-weight: bold;
+  transition: all 0.3s;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+}
+
+#pause-menu button:hover {
+  background: linear-gradient(135deg, #ffed4e, #ffd700);
+  transform: scale(1.05);
+  box-shadow: 0 5px 20px rgba(255, 215, 0, 0.6);
+}
+
+#pause-menu button:active {
+  transform: scale(0.95);
+}
+
+/* GAME OVER */
 #game-over {
   display: none;
   position: absolute;
@@ -61,13 +181,29 @@ body {
   border: 3px solid #d84315;
   pointer-events: auto;
   text-align: center;
+  border-radius: 10px;
 }
 
-button {
+#game-over h1 {
+  font-size: 48px;
+  color: #d84315;
+  text-shadow: 0 0 10px #d84315;
+  margin: 0 0 20px 0;
+}
+
+#game-over button {
   padding: 15px 30px;
   font-size: 20px;
   cursor: pointer;
   background: #d84315;
   color: white;
   border: none;
+  border-radius: 5px;
+  margin-top: 20px;
+  transition: all 0.3s;
+}
+
+#game-over button:hover {
+  background: #bf360c;
+  transform: scale(1.05);
 }

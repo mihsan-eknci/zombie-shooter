@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Zombie Shooter - Dev Mode</title>
+  <title>Zombie Shooter</title>
   <link rel="stylesheet" href="./src/style.css">
 </head>
 
@@ -15,9 +15,32 @@
         <div id="health-bar"></div>
       </div>
       <div id="ammo-text">MERMİ: ∞</div>
-      <div id="wave-info" style="margin-top: 10px; color: #ff9800;">DALGA: 1</div>
+      <div id="wave-info">DALGA: 1 | 🧟 KALAN: 10</div>
     </div>
     <div id="score-box">0</div>
+    
+    <!-- WAVE POPUP -->
+    <div id="wave-complete">
+      <div class="wave-complete-content">
+        <h2>🎉 DALGA TEMİZLENDİ! 🎉</h2>
+        <p class="next-wave">
+          Sıradaki Dalga:<br>
+          <span id="next-wave-num">2</span>
+        </p>
+        <p class="reward">+20 CAN</p>
+      </div>
+    </div>
+    
+    <!-- PAUSE MENÜ -->
+    <div id="pause-menu">
+      <h1>DURDURULDU</h1>
+      <p style="color: #aaa; margin: 20px 0;">Oyun duraklatıldı</p>
+      <button id="resume-btn">DEVAM ET</button>
+      <button id="restart-btn-pause">YENİDEN BAŞLA</button>
+      <p style="color: #888; margin-top: 30px; font-size: 14px;">ESC - Devam Et</p>
+    </div>
+    
+    <!-- GAME OVER -->
     <div id="game-over">
       <h1>AVLANDIN!</h1>
       <p id="final-score">Skorun: 0</p>
