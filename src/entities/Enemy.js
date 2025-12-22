@@ -60,7 +60,7 @@ export class Enemy {
         this.rightArmPivot = new THREE.Group();
         this.rightArmPivot.position.set(0.45, 0.3, 0);
         this.body.add(this.rightArmPivot);
-        
+
         this.rightArm = new THREE.Mesh(armGeo, armMat);
         this.rightArm.position.y = -0.35;
         this.rightArm.castShadow = true;
@@ -85,7 +85,7 @@ export class Enemy {
         this.rightLegPivot = new THREE.Group();
         this.rightLegPivot.position.set(0.15, -0.35, 0);
         this.body.add(this.rightLegPivot);
-        
+
         this.rightLeg = new THREE.Mesh(legGeo, legMat);
         this.rightLeg.position.y = -0.35;
         this.rightLeg.castShadow = true;
@@ -106,6 +106,19 @@ export class Enemy {
     update(dt, playerPosition) {
         if (!this.isAlive) return;
 
+        // EĞER BU BİR "REMOTE" (SUNUCU) ZOMBİSİ İSE HAREKET MANTIĞINI ÇALIŞTIRMA
+        if (this.id && this.id.startsWith('zombie_')) {
+            // Sadece animasyonları oynat (bacak sallama vs.)
+            const speed = 2.0; // Tahmini hız
+            const time = Date.now() * 0.005 * speed;
+            const angle = Math.sin(time) * 0.6;
+            this.rightLegPivot.rotation.x = angle;
+            this.leftLegPivot.rotation.x = -angle;
+            this.rightArmPivot.rotation.x = -Math.PI / 3 + Math.sin(time * 2) * 0.15;
+            this.leftArmPivot.rotation.x = -Math.PI / 3 + Math.cos(time * 2) * 0.15;
+            return; // <-- HAREKET KODLARINA GİRMEDEN ÇIK
+        }
+
         const direction = new THREE.Vector3()
             .subVectors(playerPosition, this.mesh.position);
         direction.y = 0;
@@ -122,7 +135,7 @@ export class Enemy {
 
             this.rightLegPivot.rotation.x = angle;
             this.leftLegPivot.rotation.x = -angle;
-            
+
             // Kollar hafifçe yukarı aşağı (zombi gibi)
             this.rightArmPivot.rotation.x = -Math.PI / 3 + Math.sin(time * 2) * 0.15;
             this.leftArmPivot.rotation.x = -Math.PI / 3 + Math.cos(time * 2) * 0.15;
@@ -131,7 +144,7 @@ export class Enemy {
 
     takeDamage(damage = 1) {
         this.health -= damage; // Hasar parametresini kullan
-        
+
         this.flashMaterial(this.body.material);
         this.flashMaterial(this.head.material);
         this.flashMaterial(this.rightArm.material);
@@ -153,7 +166,7 @@ export class Enemy {
     kill() {
         this.isAlive = false;
         this.scene.remove(this.mesh);
-        
+
         this.mesh.traverse((child) => {
             if (child.isMesh) {
                 child.geometry.dispose();

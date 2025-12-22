@@ -101,7 +101,8 @@ body {
   background-size: contain;
   background-repeat: no-repeat;
   background-position: center;
-  image-rendering: pixelated; /* Pixel art keskin görünsün */
+  image-rendering: pixelated;
+  /* Pixel art keskin görünsün */
 }
 
 /* Pixel art silah görselleri - Base64 encoded */
@@ -153,9 +154,19 @@ body {
 }
 
 @keyframes popupBounce {
-  0% { transform: scale(0); opacity: 0; }
-  50% { transform: scale(1.1); }
-  100% { transform: scale(1); opacity: 1; }
+  0% {
+    transform: scale(0);
+    opacity: 0;
+  }
+
+  50% {
+    transform: scale(1.1);
+  }
+
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
 }
 
 .wave-complete-content h2 {
@@ -282,4 +293,72 @@ body {
 #game-over button:hover {
   background: #bf360c;
   transform: scale(1.05);
+}
+
+/* MENÜ EKRANI */
+#menu-screen {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(20, 20, 25, 0.95);
+  /* Koyu Arkaplan */
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 2000;
+  /* Her şeyin üstünde */
+  font-family: Arial, sans-serif;
+}
+
+.menu-content {
+  text-align: center;
+  color: white;
+}
+
+.game-title {
+  font-size: 60px;
+  color: #e91e63;
+  text-shadow: 0 0 20px rgba(233, 30, 99, 0.5);
+  margin-bottom: 40px;
+}
+
+.input-group input {
+  padding: 15px;
+  font-size: 20px;
+  border-radius: 5px;
+  border: none;
+  background: #333;
+  color: white;
+  margin-bottom: 30px;
+  text-align: center;
+  width: 300px;
+}
+
+.menu-btn {
+  display: block;
+  width: 300px;
+  padding: 15px;
+  margin: 10px auto;
+  font-size: 18px;
+  font-weight: bold;
+  cursor: pointer;
+  background: #444;
+  color: white;
+  border: 2px solid #666;
+  border-radius: 8px;
+  transition: all 0.2s;
+}
+
+.menu-btn:hover {
+  background: #e91e63;
+  border-color: #ff80ab;
+  transform: scale(1.05);
+}
+
+.credits {
+  margin-top: 50px;
+  color: #666;
+  font-size: 12px;
 }

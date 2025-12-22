@@ -1,3 +1,4 @@
+<!-- index.html -->
 <!DOCTYPE html>
 <html lang="tr">
 
@@ -9,6 +10,25 @@
 </head>
 
 <body>
+
+  <div id="menu-screen">
+    <div class="menu-content">
+      <h1 class="game-title">ZOMBIE SURVIVOR</h1>
+
+      <div class="input-group">
+        <input type="text" id="player-name-input" placeholder="İsminiz (Örn: Hunter)" maxlength="10">
+      </div>
+
+      <div class="mode-selection">
+        <button id="btn-single" class="menu-btn">🧟 TEK OYUNCULU</button>
+        <button id="btn-coop" class="menu-btn">🤝 CO-OP (BERABER)</button>
+        <button id="btn-pvp" class="menu-btn">⚔️ PVP (SAVAŞ)</button>
+      </div>
+
+      <p class="credits">v1.0 - Multiplayer Update</p>
+    </div>
+  </div>
+
   <div id="ui-layer">
     <div class="status-box">
       <div class="bar-container">
@@ -18,7 +38,7 @@
       <div id="wave-info">DALGA: 1 | 🧟 KALAN: 10</div>
     </div>
     <div id="score-box">0</div>
-    
+
     <!-- SİLAH SEÇİM UI (ALT ORTA) -->
     <div id="weapon-selector">
       <div class="weapon-slot active" data-weapon="pistol">
@@ -38,7 +58,7 @@
         <div class="weapon-key">4</div>
       </div>
     </div>
-    
+
     <!-- WAVE POPUP -->
     <div id="wave-complete">
       <div class="wave-complete-content">
@@ -50,7 +70,7 @@
         <p class="reward">+20 CAN</p>
       </div>
     </div>
-    
+
     <!-- PAUSE MENÜ -->
     <div id="pause-menu">
       <h1>DURDURULDU</h1>
@@ -59,7 +79,7 @@
       <button id="restart-btn-pause">YENİDEN BAŞLA</button>
       <p style="color: #888; margin-top: 30px; font-size: 14px;">ESC - Devam Et</p>
     </div>
-    
+
     <!-- GAME OVER -->
     <div id="game-over">
       <h1>AVLANDIN!</h1>
@@ -67,7 +87,7 @@
       <button id="restart-btn">TEKRAR DENE</button>
     </div>
   </div>
-  <script type="module" src="/src/main.js"></script>
+  <script type="module" src="/src/Main.js"></script>
 </body>
 
 </html>
