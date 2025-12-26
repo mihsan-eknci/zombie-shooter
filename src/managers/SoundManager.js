@@ -61,6 +61,14 @@ export class SoundManager {
         setTimeout(() => this.playTone(350, 0.08, 'square', 0.4), 200);
     }
 
+    // ✅ YENİ: SİLAH DEĞİŞTİRME SESİ
+    playWeaponSwitch() {
+        // Metalik "click-clack" sesi
+        this.playTone(400, 0.06, 'square', 0.3);
+        setTimeout(() => this.playTone(350, 0.04, 'square', 0.25), 60);
+        setTimeout(() => this.playTone(450, 0.05, 'square', 0.2), 120);
+    }
+
     // ZOMBİ ÖLÜM SESİ
     playZombieDeath() {
         // Düşen ses (yüksekten alçağa)
@@ -103,7 +111,7 @@ export class SoundManager {
         }
     }
 
-    // KRİTİK VURUŞ SESİ (Ekstra!)
+    // KRİTİK VURUŞ SESİ
     playCriticalHit() {
         // Güçlü, dramatik ses
         this.playTone(600, 0.08, 'square', 0.6);

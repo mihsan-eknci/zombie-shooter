@@ -17,27 +17,24 @@ export class UIManager {
         this.gameOverPopup = document.getElementById('game-over');
         this.finalScore = document.getElementById('final-score');
 
-        // --- EKLENEN KISIM: BUTON DİNLEYİCİLERİ ---
+        // ✅ LOW HP OVERLAY
+        this.lowHpOverlay = document.getElementById('low-hp-overlay');
 
-        // 1. Game Over ekranındaki 'TEKRAR DENE' butonu
+        // BUTON DİNLEYİCİLERİ
         const restartBtn = document.getElementById('restart-btn');
         if (restartBtn) {
-            restartBtn.onclick = () => location.reload(); // Sayfayı yeniler
+            restartBtn.onclick = () => location.reload();
         }
 
-        // 2. Pause menüsündeki 'YENİDEN BAŞLA' butonu
         const pauseRestartBtn = document.getElementById('restart-btn-pause');
         if (pauseRestartBtn) {
             pauseRestartBtn.onclick = () => location.reload();
         }
 
-        // 3. Pause menüsündeki 'DEVAM ET' butonu (Opsiyonel ama iyi olur)
         const resumeBtn = document.getElementById('resume-btn');
         if (resumeBtn) {
             resumeBtn.onclick = () => {
                 document.getElementById('pause-menu').style.display = 'none';
-                // Game.js içindeki isPaused değişkenini dışarıdan değiştirmek için bir yol gerekebilir
-                // veya oyuncu ESC'ye basarak devam edebilir.
             };
         }
 
@@ -65,18 +62,38 @@ export class UIManager {
         if (this.healthBar) {
             const healthPercent = (this.player.health / this.player.maxHealth) * 100;
             this.healthBar.style.width = healthPercent + '%';
+
+            // ✅ LOW HP OVERLAY KONTROLÜ
+            if (this.lowHpOverlay) {
+                if (healthPercent <= 10) {
+                    // Can %10'un altında → KRİTİK (nabız efekti)
+                    this.lowHpOverlay.className = 'critical';
+                } else if (healthPercent <= 25) {
+                    // Can %25'in altında → UYARI (sabit kırmızı)
+                    this.lowHpOverlay.className = 'active';
+                } else {
+                    // Can normal → Efekti kaldır
+                    this.lowHpOverlay.className = '';
+                }
+            }
         }
     }
 
     updateAmmo() {
         if (this.ammoText) {
             const weapon = this.player.getWeapon();
+            
             if (this.player.isReloading) {
                 this.ammoText.innerText = "DOLDURULUYOR...";
                 this.ammoText.style.color = "#ff0000";
             } else {
-                this.ammoText.innerText = `${weapon.name.toUpperCase()}: ${this.player.ammo}/${weapon.clipSize}`;
-                this.ammoText.style.color = "#ffd700";
+                this.ammoText.innerText = `${weapon.name.toUpperCase()}: ${weapon.currentAmmo}/${weapon.reserveAmmo}`;
+                
+                if (weapon.reserveAmmo < weapon.clipSize) {
+                    this.ammoText.style.color = "#ff4500";
+                } else {
+                    this.ammoText.style.color = "#ffd700";
+                }
             }
         }
     }
@@ -104,14 +121,11 @@ export class UIManager {
         }
     }
 
-    // --- YENİ EKLENEN METOTLAR ---
-
     showWaveComplete(nextWave) {
         if (this.wavePopup && this.nextWaveNum) {
             this.nextWaveNum.innerText = nextWave;
             this.wavePopup.style.display = 'block';
 
-            // 3 Saniye sonra gizle
             setTimeout(() => {
                 this.wavePopup.style.display = 'none';
             }, 3000);

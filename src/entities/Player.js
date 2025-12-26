@@ -1,21 +1,23 @@
 import * as THREE from 'three';
 
 export class Player {
-    constructor(scene) {
+    constructor(scene, soundManager) { // ✅ soundManager parametresi eklendi
         this.scene = scene;
+        this.soundManager = soundManager; // ✅ Referansı sakla
         this.speed = 10;
         this.maxHealth = 100;
         this.health = 100;
         this.isDead = false;
 
         // --- SİLAH SİSTEMİ ---
-        // GÜNCELLEME: Her silahın kendi 'currentAmmo' (mevcut mermi) değeri var.
         this.weapons = {
             pistol: {
                 name: 'Desert Eagle',
                 damage: 10,
                 clipSize: 15,
-                currentAmmo: 15, // Hafıza burada tutulacak
+                currentAmmo: 15,
+                reserveAmmo: 60,
+                maxReserveAmmo: 150,
                 reloadTime: 1.5,
                 fireRate: 0.4,
                 bulletCount: 1,
@@ -30,6 +32,8 @@ export class Player {
                 damage: 7,
                 clipSize: 8,
                 currentAmmo: 8,
+                reserveAmmo: 40,
+                maxReserveAmmo: 80,
                 reloadTime: 2.5,
                 fireRate: 1.0,
                 bulletCount: 4,
@@ -45,6 +49,8 @@ export class Player {
                 damage: 4,
                 clipSize: 30,
                 currentAmmo: 30,
+                reserveAmmo: 120,
+                maxReserveAmmo: 300,
                 reloadTime: 2.0,
                 fireRate: 0.08,
                 bulletCount: 1,
@@ -60,6 +66,8 @@ export class Player {
                 damage: 40,
                 clipSize: 5,
                 currentAmmo: 5,
+                reserveAmmo: 20,
+                maxReserveAmmo: 50,
                 reloadTime: 3.0,
                 fireRate: 2.0,
                 bulletCount: 1,
@@ -72,17 +80,14 @@ export class Player {
         };
 
         this.currentWeapon = 'pistol';
-        this.ammo = this.weapons.pistol.currentAmmo; // Başlangıçta tabanca mermisini al
         this.isReloading = false;
         this.lastShotTime = 0;
 
-        // Model oluşturma (Değişiklik yok, kodun devamı aynı...)
         this.mesh = new THREE.Group();
-        this.createModel(); // Okunabilirlik için model kodunu aşağıya fonksiyon olarak taşıdım
+        this.createModel();
         scene.add(this.mesh);
     }
 
-    // Model kodunu buraya topladım (Constructor şişmesin diye)
     createModel() {
         const skinColor = 0xffccaa;
         const shirtColor = 0x0088ff;
@@ -155,24 +160,22 @@ export class Player {
     }
 
     switchWeapon(weaponName) {
-        // Eğer aynı silah değilse ve silah mevcutsa
         if (this.weapons[weaponName] && weaponName !== this.currentWeapon) {
-            // Önceki silahın mermisini kaydet (Gerek yok çünkü ateş edince güncelliyoruz ama yine de emin olalım)
-            this.weapons[this.currentWeapon].currentAmmo = this.ammo;
-
             this.currentWeapon = weaponName;
             const weapon = this.weapons[weaponName];
-
-            // DÜZELTME: clipSize yerine hafızadaki mermiyi al
-            this.ammo = weapon.currentAmmo;
-
+            
             this.isReloading = false;
 
             this.gun.material.color.setHex(weapon.color);
             this.gun.geometry.dispose();
             this.gun.geometry = new THREE.BoxGeometry(weapon.size.w, weapon.size.h, weapon.size.l);
 
-            console.log(`✅ ${weapon.name} seçildi! Mermi: ${this.ammo}`);
+            // ✅ SES ÇALMA
+            if (this.soundManager) {
+                this.soundManager.playWeaponSwitch();
+            }
+
+            console.log(`✅ ${weapon.name} seçildi! Mermi: ${weapon.currentAmmo}/${weapon.reserveAmmo}`);
         }
     }
 
@@ -181,51 +184,37 @@ export class Player {
 
         const moveDir = new THREE.Vector3(0, 0, 0);
 
-        // --- İZOMETRİK HAREKET KONTROLLERİ ---
-        // Kameranın 45 derece açısına göre yönleri ayarladık.
-
-        // W (İLERİ): Ekranın yukarısına gitmek için -> Hem X azalır Hem Z azalır
         if (inputs['w'] || inputs['W']) {
             moveDir.x -= 1;
             moveDir.z -= 1;
         }
-        // S (GERİ): Ekranın aşağısına gitmek için -> Hem X artar Hem Z artar
         if (inputs['s'] || inputs['S']) {
             moveDir.x += 1;
             moveDir.z += 1;
         }
-        // A (SOL): Ekranın soluna gitmek için -> X azalır, Z artar
         if (inputs['a'] || inputs['A']) {
             moveDir.x -= 1;
             moveDir.z += 1;
         }
-        // D (SAĞ): Ekranın sağına gitmek için -> X artar, Z azalır
         if (inputs['d'] || inputs['D']) {
             moveDir.x += 1;
             moveDir.z -= 1;
         }
 
-        // Vektörü normalize et (Çapraz giderken hızlanmayı önler)
         if (moveDir.length() > 0) {
             moveDir.normalize();
 
             this.mesh.position.x += moveDir.x * this.speed * dt;
             this.mesh.position.z += moveDir.z * this.speed * dt;
 
-            // --- DUVARLARDAN GEÇMEYİ ENGELLE (YENİ) ---
-            // Harita Boyutu: 150, Yarıçap: 75. 
-            // 2 birim duvar payı bırakıyoruz -> Sınır: 73
             const limit = 73;
 
-            // X Eksenini Sınırla
             if (this.mesh.position.x > limit) this.mesh.position.x = limit;
             if (this.mesh.position.x < -limit) this.mesh.position.x = -limit;
 
-            // Z Eksenini Sınırla
             if (this.mesh.position.z > limit) this.mesh.position.z = limit;
             if (this.mesh.position.z < -limit) this.mesh.position.z = -limit;
 
-            // Yürüme animasyonu (Sallanma efekti)
             const time = Date.now() * 0.015;
             const angle = Math.sin(time) * 0.5;
 
@@ -234,7 +223,6 @@ export class Player {
             this.rightArmPivot.rotation.x = 0;
             this.leftArmPivot.rotation.x = angle * 0.5;
         } else {
-            // Durma hali
             this.rightLegPivot.rotation.x = 0;
             this.leftLegPivot.rotation.x = 0;
             this.leftArmPivot.rotation.x = 0;
@@ -265,36 +253,42 @@ export class Player {
         const currentTime = Date.now() / 1000;
         const timeSinceLastShot = currentTime - this.lastShotTime;
 
-        // Mermi kontrolü burada yapılmıyor artık, 
-        // 0 mermi varsa 'canShoot' false dönüyor ama Game.js reload tetikleyecek
         return !this.isReloading &&
             !this.isDead &&
             timeSinceLastShot >= weapon.fireRate;
     }
 
     shoot() {
-        if (this.ammo > 0) {
-            this.ammo--;
-            // Hafızayı da güncelle
-            this.weapons[this.currentWeapon].currentAmmo = this.ammo;
+        const weapon = this.getWeapon();
+        
+        if (weapon.currentAmmo > 0) {
+            weapon.currentAmmo--;
             this.lastShotTime = Date.now() / 1000;
-            return true; // Ateş başarılı
+            return true;
         }
-        return false; // Mermi yok
+        return false;
     }
 
     reload() {
         const weapon = this.getWeapon();
-        if (this.isReloading || this.ammo === weapon.clipSize) return;
-
+        
+        if (this.isReloading) return;
+        if (weapon.currentAmmo === weapon.clipSize) return;
+        if (weapon.reserveAmmo === 0) return;
+        
         this.isReloading = true;
         const originalRot = this.rightArmPivot.rotation.x;
-        this.rightArmPivot.rotation.x = 0; // Kolu indir
+        this.rightArmPivot.rotation.x = 0;
 
         setTimeout(() => {
-            this.ammo = weapon.clipSize;
-            this.weapons[this.currentWeapon].currentAmmo = weapon.clipSize; // Hafızayı fulle
-
+            const neededAmmo = weapon.clipSize - weapon.currentAmmo;
+            const ammoToTake = Math.min(neededAmmo, weapon.reserveAmmo);
+            
+            weapon.currentAmmo += ammoToTake;
+            weapon.reserveAmmo -= ammoToTake;
+            
+            console.log(`🔄 Reload tamamlandı: ${weapon.currentAmmo}/${weapon.reserveAmmo}`);
+            
             this.isReloading = false;
             this.rightArmPivot.rotation.x = originalRot;
         }, weapon.reloadTime * 1000);

@@ -37,7 +37,6 @@ export class Pickup {
         this.mesh.position.y = 0.5 + Math.sin(Date.now() * 0.005) * 0.2;
 
         // OYUNCU İLE ÇARPIŞMA KONTROLÜ
-        // Eğer oyuncu kutuya çok yakınsa (1.0 birim)
         if (this.mesh.position.distanceTo(player.getPosition()) < 1.0) {
             this.collect(player, onCollect);
         }
@@ -45,24 +44,50 @@ export class Pickup {
 
     collect(player, onCollect) {
         if (this.type === 'health') {
-            // Canı 20 artır (Maksimumu geçmesin)
+            // ✅ CAN SİSTEMİ
             player.health = Math.min(player.maxHealth, player.health + 20);
-            console.log("Can toplandı!");
-        } else if (this.type === 'ammo') {
-            // Bir şarjör mermi ver
-            player.ammo += 30; // Şarjör kapasitesini geçebilir (yedek mermi mantığı yoksa)
-            // Eğer yedek mermi mantığımız yoksa direkt şarjöre ekliyoruz.
-            // İstersen player.ammo = Math.min(player.clipSize, player.ammo + 30) yapabilirsin.
-            console.log("Mermi toplandı!");
+            console.log("❤️ Can toplandı! (+20)");
+            
+            if (onCollect) onCollect(this.type);
+            this.kill();
+        } 
+        else if (this.type === 'ammo') {
+            // ✅ YENİ MERMİ SİSTEMİ (DÜZELTİLMİŞ)
+            const weapon = player.getWeapon();
+            
+            // ✅ DÜZELTİLDİ: weapon.name yerine player.currentWeapon kullan
+            let ammoAmount = 0;
+            
+            if (player.currentWeapon === 'pistol') {
+                ammoAmount = 30;
+            } else if (player.currentWeapon === 'shotgun') {
+                ammoAmount = 16;
+            } else if (player.currentWeapon === 'rifle') {
+                ammoAmount = 60;
+            } else if (player.currentWeapon === 'sniper') {
+                ammoAmount = 10;
+            }
+            
+            // 2. Depo dolu mu kontrol et
+            if (weapon.reserveAmmo >= weapon.maxReserveAmmo) {
+                console.log(`⚠️ ${weapon.name} deposu dolu! (${weapon.reserveAmmo}/${weapon.maxReserveAmmo})`);
+                return; // ❌ Kutuyu ALMA
+            }
+            
+            // 3. Depoya ekle (limit aşmasın)
+            const oldReserve = weapon.reserveAmmo;
+            weapon.reserveAmmo = Math.min(
+                weapon.maxReserveAmmo, 
+                weapon.reserveAmmo + ammoAmount
+            );
+            
+            const actualAdded = weapon.reserveAmmo - oldReserve;
+            
+            console.log(`📦 ${weapon.name} mermisi toplandı! (+${actualAdded}) → ${weapon.reserveAmmo}/${weapon.maxReserveAmmo}`);
+            
+            if (onCollect) onCollect(this.type);
+            this.kill();
         }
-
-        // Callback çağır (ses çalmak için)
-        if (onCollect) {
-            onCollect(this.type);
-        }
-
-        // UI Güncellemek için bir yol bulmamız lazım ama şimdilik main.js halledecek
-        this.kill();
     }
 
     kill() {

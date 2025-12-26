@@ -11,27 +11,29 @@ export class Enemy {
         let clothesColor = 0x4e342e;
         let scale = 1.0;
         this.speed = 4.0;
-        this.health = 20; // Normal zombi canı 20
+        this.health = 20;
 
         if (type === 'runner') {
             skinColor = 0x2e7d32;
             clothesColor = 0xb71c1c;
             this.speed = 7.0;
-            this.health = 10; // Hızlı zombi canı 10
+            this.health = 10;
             scale = 0.8;
         } else if (type === 'tank') {
             skinColor = 0x212121;
             clothesColor = 0x263238;
             this.speed = 2.5;
-            this.health = 120; // Tank zombi canı 120
+            this.health = 120;
             scale = 1.6;
         } else if (type === 'boss') {
             skinColor = 0x4a148c;
             clothesColor = 0x000000;
             this.speed = 3.5;
-            this.health = 240; // Boss zombi canı 240
+            this.health = 240;
             scale = 2.5;
         }
+
+        this.maxHealth = this.health; // ✅ Maksimum canı kaydet
 
         this.mesh = new THREE.Group();
         this.mesh.position.copy(position);
@@ -100,23 +102,84 @@ export class Enemy {
         this.leftLeg.castShadow = true;
         this.leftLegPivot.add(this.leftLeg);
 
+        // ✅ 5. CAN BARI (YENİ)
+        this.createHealthBar();
+
         scene.add(this.mesh);
+    }
+
+    // ✅ CAN BARI OLUŞTURMA
+    createHealthBar() {
+        // Canvas oluştur
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d');
+        canvas.width = 128;
+        canvas.height = 32;
+
+        // Arkaplan (siyah çerçeve)
+        context.fillStyle = '#000000';
+        context.fillRect(0, 0, 128, 32);
+
+        // Can barı (kırmızı)
+        context.fillStyle = '#ff0000';
+        context.fillRect(4, 4, 120, 24);
+
+        // Texture oluştur
+        const texture = new THREE.CanvasTexture(canvas);
+        texture.needsUpdate = true;
+
+        // Sprite materyali
+        const spriteMaterial = new THREE.SpriteMaterial({
+            map: texture,
+            transparent: true,
+            depthTest: false
+        });
+
+        // Sprite oluştur
+        this.healthBarSprite = new THREE.Sprite(spriteMaterial);
+        this.healthBarSprite.scale.set(2, 0.5, 1); // Boyut
+        this.healthBarSprite.position.y = 2.5; // Kafanın üstünde
+
+        // Canvas referansını sakla (güncelleme için)
+        this.healthBarCanvas = canvas;
+        this.healthBarContext = context;
+
+        this.mesh.add(this.healthBarSprite);
+    }
+
+    // ✅ CAN BARI GÜNCELLEME
+    updateHealthBar() {
+        const healthPercent = this.health / this.maxHealth;
+
+        // Canvas'ı temizle
+        this.healthBarContext.clearRect(0, 0, 128, 32);
+
+        // Arkaplan (siyah çerçeve)
+        this.healthBarContext.fillStyle = '#000000';
+        this.healthBarContext.fillRect(0, 0, 128, 32);
+
+        // Can barı (kırmızı - genişlik değişken)
+        const barWidth = 120 * healthPercent;
+        this.healthBarContext.fillStyle = '#ff0000';
+        this.healthBarContext.fillRect(4, 4, barWidth, 24);
+
+        // Texture'ı güncelle
+        this.healthBarSprite.material.map.needsUpdate = true;
     }
 
     update(dt, playerPosition) {
         if (!this.isAlive) return;
 
-        // EĞER BU BİR "REMOTE" (SUNUCU) ZOMBİSİ İSE HAREKET MANTIĞINI ÇALIŞTIRMA
+        // Remote zombi kontrolü
         if (this.id && this.id.startsWith('zombie_')) {
-            // Sadece animasyonları oynat (bacak sallama vs.)
-            const speed = 2.0; // Tahmini hız
+            const speed = 2.0;
             const time = Date.now() * 0.005 * speed;
             const angle = Math.sin(time) * 0.6;
             this.rightLegPivot.rotation.x = angle;
             this.leftLegPivot.rotation.x = -angle;
             this.rightArmPivot.rotation.x = -Math.PI / 3 + Math.sin(time * 2) * 0.15;
             this.leftArmPivot.rotation.x = -Math.PI / 3 + Math.cos(time * 2) * 0.15;
-            return; // <-- HAREKET KODLARINA GİRMEDEN ÇIK
+            return;
         }
 
         const direction = new THREE.Vector3()
@@ -136,19 +199,21 @@ export class Enemy {
             this.rightLegPivot.rotation.x = angle;
             this.leftLegPivot.rotation.x = -angle;
 
-            // Kollar hafifçe yukarı aşağı (zombi gibi)
             this.rightArmPivot.rotation.x = -Math.PI / 3 + Math.sin(time * 2) * 0.15;
             this.leftArmPivot.rotation.x = -Math.PI / 3 + Math.cos(time * 2) * 0.15;
         }
     }
 
     takeDamage(damage = 1) {
-        this.health -= damage; // Hasar parametresini kullan
+        this.health -= damage;
 
         this.flashMaterial(this.body.material);
         this.flashMaterial(this.head.material);
         this.flashMaterial(this.rightArm.material);
         this.flashMaterial(this.leftArm.material);
+
+        // ✅ CAN BARI GÜNCELLE
+        this.updateHealthBar();
 
         if (this.health <= 0) {
             this.kill();
@@ -173,5 +238,11 @@ export class Enemy {
                 child.material.dispose();
             }
         });
+
+        // ✅ CAN BARI TEXTURE'INI TEMİZLE
+        if (this.healthBarSprite) {
+            this.healthBarSprite.material.map.dispose();
+            this.healthBarSprite.material.dispose();
+        }
     }
 }

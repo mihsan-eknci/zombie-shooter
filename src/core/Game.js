@@ -1,21 +1,21 @@
-// src/coree/Game.js
+// src/core/Game.js
 import * as THREE from 'three';
 import { Player } from '../entities/Player.js';
 import { World } from './World.js';
 import { InputManager } from './InputManager.js';
 import { Bullet } from '../entities/Bullet.js';
-import { DamagePopup } from '../entities/DamagePopup.js'; // EKLENDİ
+import { DamagePopup } from '../entities/DamagePopup.js';
 import { UIManager } from '../managers/UIManager.js';
 import { WaveManager } from '../managers/WaveManager.js';
 import { SoundManager } from '../managers/SoundManager.js';
 import { Pickup } from '../entities/Pickup.js';
 import { MinimapManager } from '../managers/MinimapManager.js';
 import { RemotePlayer } from '../entities/RemotePlayer.js';
-import { Enemy } from '../entities/Enemy.js'; // <-- BU SATIRI EKLE
+import { Enemy } from '../entities/Enemy.js';
 
 export class Game {
     constructor(socket) {
-        this.socket = socket; // <-- Sınıf içinde kullanmak için kaydet
+        this.socket = socket;
         this.config = {
             viewSize: 15,
             cameraOffset: 25,
@@ -43,22 +43,19 @@ export class Game {
 
         this.bullets = [];
         this.enemies = [];
-        this.damagePopups = []; // EKLENDİ: Hasar yazılarını tutacak dizi
+        this.damagePopups = [];
         this.isPaused = false;
-        this.score = 0; // Skor takibi
-        this.pickups = []; // Loot kutularını tutacak dizi
-        this.remotePlayers = {}; // Diğer oyuncuları ID'si ile tutacağımız obje
+        this.score = 0;
+        this.pickups = [];
+        this.remotePlayers = {};
 
-        // Bağlantı testi (Konsola bak)
         if (this.socket) {
             console.log("🔌 Multiplayer Modu Aktif - Sunucuya bağlanılıyor...");
 
-            // 1. Bağlanınca ID yaz
             this.socket.on('connect', () => {
                 console.log(`✅ Bağlandı! ID: ${this.socket.id}`);
             });
 
-            // 2. Oyuna girdiğimde zaten içeride olan oyuncuları al
             this.socket.on('currentPlayers', (players) => {
                 Object.keys(players).forEach((id) => {
                     if (id !== this.socket.id) {
@@ -67,20 +64,17 @@ export class Game {
                 });
             });
 
-            // 3. Yeni bir oyuncu bağlandığında
             this.socket.on('newPlayer', (playerInfo) => {
                 this.addRemotePlayer(playerInfo);
                 console.log("Yeni oyuncu katıldı:", playerInfo.id);
             });
 
-            // 4. Bir oyuncu hareket ettiğinde
             this.socket.on('playerMoved', (playerInfo) => {
                 if (this.remotePlayers[playerInfo.id]) {
                     this.remotePlayers[playerInfo.id].updatePosition(playerInfo);
                 }
             });
 
-            // 5. Bir oyuncu çıktığında
             this.socket.on('playerDisconnected', (id) => {
                 if (this.remotePlayers[id]) {
                     this.remotePlayers[id].delete();
@@ -89,20 +83,13 @@ export class Game {
                 }
             });
 
-            // 6. Başka bir oyuncu ateş ettiğinde
             this.socket.on('remotePlayerShoot', (data) => {
-                // Gelen veriyi Three.js Vektörlerine çevir
                 const spawnPos = new THREE.Vector3(data.x, data.y, data.z);
                 const direction = new THREE.Vector3(data.dirX, data.dirY, data.dirZ);
 
-                // Mermiyi oluştur (RemotePlayer'ın silah özellikleriyle)
-                // data.weaponData içinde hız, renk, boyut gibi bilgiler var
                 const bullet = new Bullet(this.scene, spawnPos, direction, data.weaponData);
-
-                // Mermiyi listeye ekle ki update döngüsünde hareket etsin
                 this.bullets.push(bullet);
 
-                // Ses ve Işık efekti
                 this.soundManager.playShootSound(data.weaponName || 'pistol');
 
                 const flash = new THREE.PointLight(0xffff00, 2, 10);
@@ -111,121 +98,84 @@ export class Game {
                 setTimeout(() => this.scene.remove(flash), 50);
             });
 
-            // 7. Biri hasar aldığında
             this.socket.on('playerDamaged', (data) => {
-                // 1. EĞER HASAR ALAN BEN İSEM
                 if (data.id === this.socket.id) {
                     this.player.takeDamage(data.damage);
                     this.soundManager.playPlayerHurt();
                     this.uiManager.updateHealth();
 
-                    // GÖRSEL EFEKT (KANLI EKRAN)
                     const overlay = document.getElementById('damage-overlay');
                     if (overlay) {
                         overlay.style.opacity = "1";
                         setTimeout(() => overlay.style.opacity = "0", 300);
                     } else {
-                        // Eğer HTML'de div yoksa geçici çözüm
                         document.body.style.backgroundColor = "rgba(255, 0, 0, 0.4)";
-                        setTimeout(() => document.body.style.backgroundColor = "#ad8a6c", 100); // Arka plan rengine geri dön
+                        setTimeout(() => document.body.style.backgroundColor = "#ad8a6c", 100);
                     }
 
                     console.log(`💔 Vuruldum! Kalan Can: ${this.player.health}`);
 
                     if (this.player.health <= 0 && !this.player.isDead) {
                         this.player.isDead = true;
-                        this.socket.emit('playerDied'); // Sunucuya öldüğümü bildir
-                        this.uiManager.showGameOver("ÖLDÜNÜZ");
+                        this.socket.emit('playerDied');
+                        this.uiManager.showGameOver(this.score);
+                        this.isPaused = true;
                     }
-                }
-                // 2. EĞER BAŞKASI HASAR ALDIYSA (Co-op Arkadaşım)
-                else if (this.remotePlayers[data.id]) {
-                    // Arkadaşının karakterinde kırmızı yanıp sönme efekti (Opsiyonel)
-                    // this.remotePlayers[data.id].flashRed(); 
                 }
             });
 
-            // 8. ZOMBİ POZİSYON GÜNCELLEMESİ (CO-OP)
             this.socket.on('enemyUpdate', (serverEnemies) => {
-                // Sunucudan gelen listedeki her zombi için:
                 Object.values(serverEnemies).forEach(sEnemy => {
-                    // Bu zombi bizde var mı?
                     let localEnemy = this.enemies.find(e => e.id === sEnemy.id);
 
                     if (localEnemy) {
-                        // Varsa konumunu güncelle (Interpolation yapılabilir ama şimdilik direkt atıyoruz)
                         localEnemy.mesh.position.set(sEnemy.x, sEnemy.y, sEnemy.z);
                         localEnemy.mesh.lookAt(sEnemy.x + Math.sin(sEnemy.rotation), sEnemy.y, sEnemy.z + Math.cos(sEnemy.rotation));
-                    } else {
-                        // Yoksa yarat (Enemy sınıfını biraz modifiye etmemiz gerekecek veya id ekleyeceğiz)
-                        // Şimdilik basitçe yaratıyoruz, detaylı Enemy düzenlemesi bir sonraki adımda.
-                        // Geçici çözüm:
-                        // this.spawnRemoteZombie(sEnemy); (Bunu birazdan yazacağız)
                     }
                 });
             });
 
-            // 9. ZOMBİ DOĞMA (SPAWN)
             this.socket.on('enemySpawn', (sEnemy) => {
                 this.spawnRemoteZombie(sEnemy);
             });
 
-            // 10. ZOMBİ ÖLÜMÜ (CO-OP)
             this.socket.on('enemyDied', (data) => {
-                // data = { id, killerId }
-
                 const enemy = this.enemies.find(e => e.id === data.id);
                 if (enemy) {
-                    // Ses ve efektler
                     this.soundManager.playZombieDeath();
-
-                    // Zombiyi yok et
                     enemy.kill();
 
-                    // Eğer ben öldürdüysem skoru artır
                     if (data.killerId === this.socket.id) {
                         this.score += 10;
                     }
                 }
             });
 
-            // 11. EŞYA OLUŞTURMA (SPAWN)
             this.socket.on('pickupSpawn', (data) => {
-                // Pickup sınıfını kullanarak sahneye ekle
-                // (Pickup.js'de id özelliği olmadığı için sonradan ekliyoruz)
                 const p = new Pickup(this.scene, new THREE.Vector3(data.x, 0, data.z), data.type);
                 p.id = data.id;
                 this.pickups.push(p);
             });
 
-            // 12. EŞYA TOPLANDI BİLGİSİ
             this.socket.on('pickupCollected', (data) => {
-                // data = { id, collectorId, type }
-
-                // 1. Eşyayı sahneden sil (Eğer hala duruyorsa)
                 const index = this.pickups.findIndex(p => p.id === data.id);
                 if (index !== -1) {
-                    this.pickups[index].isAlive = false; // update döngüsünde silinecek
-                    this.pickups[index].mesh.visible = false; // Hemen gizle
+                    this.pickups[index].isAlive = false;
+                    this.pickups[index].mesh.visible = false;
                 }
 
-                // 2. Eğer toplayan BENSEM ödülü ver
                 if (data.collectorId === this.socket.id) {
                     this.soundManager.playPickupSound(data.type);
 
                     if (data.type === 'health') {
-                        this.player.heal(20); // Can doldurma fonksiyonun varsa
-                        // Yoksa: this.player.health += 20;
+                        this.player.health = Math.min(this.player.maxHealth, this.player.health + 20);
                     }
                     else if (data.type === 'ammo') {
-                        // Mermi doldurma fonksiyonun varsa
-                        const weapon = this.player.getWeapon(); // Şu anki silah
-                        weapon.reserve += 30; // veya this.player.addAmmo(30);
+                        const weapon = this.player.getWeapon();
+                        weapon.reserveAmmo = Math.min(weapon.maxReserveAmmo, weapon.reserveAmmo + 30);
                     }
 
                     this.uiManager.update();
-                    this.uiManager.updateHealth();
-                    this.uiManager.updateAmmo();
                 }
             });
         }
@@ -252,7 +202,7 @@ export class Game {
         document.body.appendChild(this.renderer.domElement);
 
         this.world = new World(this.scene, this.config);
-        this.player = new Player(this.scene);
+        this.player = new Player(this.scene, this.soundManager);
         this.uiManager = new UIManager(this.player);
 
         this.waveManager = new WaveManager(
@@ -265,58 +215,95 @@ export class Game {
         this.waveManager.setEnemiesArray(this.enemies);
         this.minimapManager = new MinimapManager(this);
 
+        // ✅ ESC TUŞU İÇİN EVENT LISTENER
+        window.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                this.togglePause();
+            }
+        });
+
+        // ✅ RESUME BUTONU İÇİN EVENT LISTENER (DÜZELTİLDİ)
+        const resumeBtn = document.getElementById('resume-btn');
+        if (resumeBtn) {
+            resumeBtn.onclick = () => {
+                this.togglePause(); // ✅ Artık togglePause çağırıyor
+            };
+        }
+
         window.addEventListener('resize', () => this.onWindowResize());
     }
 
-    // menü ekranı için eklendi
+    // ✅ PAUSE TOGGLE FONKSİYONU
+    togglePause() {
+        if (this.player.isDead) return; // Ölüyse pause yapma
+
+        this.isPaused = !this.isPaused;
+        const pauseMenu = document.getElementById('pause-menu');
+
+        if (this.isPaused) {
+            pauseMenu.style.display = 'block';
+            console.log("⏸️ Oyun duraklatıldı");
+        } else {
+            pauseMenu.style.display = 'none';
+            console.log("▶️ Oyun devam ediyor");
+        }
+    }
+
     start(mode, playerName) {
-        this.mode = mode; // 'single', 'coop', 'pvp'
+        this.mode = mode;
         this.playerName = playerName;
         this.isPaused = false;
 
         console.log(`🚀 Mod Yüklendi: ${mode}`);
 
-        // --- MOD AYARLARI ---
         if (mode === 'single') {
-            // Tek kişilik: Sunucuya bağlanmaya gerek yok (veya sadece skor için)
-            // Zombiler senin bilgisayarında çalışsın
             this.waveManager.enable = true;
         }
         else if (mode === 'coop') {
-            // Co-op: Sunucuya haber ver
             this.socket.emit('joinGame', { mode: 'coop', name: playerName });
-            this.waveManager.enable = false; // Yerel zombi üretimini KAPAT
-            this.enemies.forEach(e => e.kill()); // Varsa eskileri temizle
+            this.waveManager.enable = false;
+            this.enemies.forEach(e => e.kill());
             this.enemies = [];
         }
         else if (mode === 'pvp') {
-            // PvP: Sunucuya haber ver
             this.socket.emit('joinGame', { mode: 'pvp', name: playerName });
-            // Zombileri KAPAT (Sadece oyuncular savaşsın)
             this.waveManager.enable = false;
-            // Mevcut zombileri sil
             this.enemies.forEach(e => e.kill());
             this.enemies = [];
         }
 
-        // Oyuncuya ismini ata (İleride kafa üstünde göstermek için)
         this.player.name = playerName;
-
-        // Döngüyü Başlat!
         this.animate();
     }
 
     update(dt) {
+        // ✅ PAUSE KONTROLÜ EN BAŞTA
         if (this.isPaused) return;
 
         const inputs = this.inputManager.keys;
         this.player.update(dt, inputs);
 
-        // --- MULTİPLAYER: POZİSYON GÜNCELLEMESİ (BURAYI EKLEYİN) ---
+        // ✅ 1-2-3-4 TUŞLARI İLE SİLAH DEĞİŞTİRME
+        if (inputs['1'] && this.player.currentWeapon !== 'pistol') {
+            this.player.switchWeapon('pistol');
+            this.uiManager.update();
+        }
+        if (inputs['2'] && this.player.currentWeapon !== 'shotgun') {
+            this.player.switchWeapon('shotgun');
+            this.uiManager.update();
+        }
+        if (inputs['3'] && this.player.currentWeapon !== 'rifle') {
+            this.player.switchWeapon('rifle');
+            this.uiManager.update();
+        }
+        if (inputs['4'] && this.player.currentWeapon !== 'sniper') {
+            this.player.switchWeapon('sniper');
+            this.uiManager.update();
+        }
+
         if (this.socket && (this.mode === 'coop' || this.mode === 'pvp')) {
             const pPos = this.player.getPosition();
 
-            // Her frame göndermek yerine throttle yapabiliriz (opsiyonel)
             if (!this.lastPositionUpdate || Date.now() - this.lastPositionUpdate > 50) {
                 this.socket.emit('playerMovement', {
                     x: pPos.x,
@@ -327,15 +314,17 @@ export class Game {
                 this.lastPositionUpdate = Date.now();
             }
         }
-        // --------------------------------------------------------
 
-        // --- RELOAD (Manuel) ---
+        // ✅ RELOAD (Manuel)
         if ((inputs['r'] || inputs['R']) && !this.player.isReloading) {
             const weapon = this.player.getWeapon();
-            if (this.player.ammo < weapon.clipSize) {
+            
+            if (weapon.reserveAmmo > 0 && weapon.currentAmmo < weapon.clipSize) {
                 this.player.reload();
                 this.soundManager.playReloadSound();
                 this.uiManager.updateAmmo();
+            } else if (weapon.reserveAmmo === 0) {
+                console.log("❌ Depo boş! Mermi bulamıyorsun.");
             }
         }
 
@@ -347,14 +336,20 @@ export class Game {
             this.currentAimPoint.copy(intersection);
         }
 
-        // --- ATEŞ ETME & OTO RELOAD ---
+        // ✅ ATEŞ ETME & OTO RELOAD
         if (this.inputManager.isMouseDown && this.player.canShoot()) {
-            if (this.player.ammo > 0) {
+            const weapon = this.player.getWeapon();
+            
+            if (weapon.currentAmmo > 0) {
                 this.fireBullet();
             } else {
-                this.player.reload();
-                this.soundManager.playReloadSound();
-                this.uiManager.updateAmmo();
+                if (weapon.reserveAmmo > 0) {
+                    this.player.reload();
+                    this.soundManager.playReloadSound();
+                    this.uiManager.updateAmmo();
+                } else {
+                    console.log("❌ Mermi bitti! Yerden mermi topla.");
+                }
             }
         }
 
@@ -365,7 +360,7 @@ export class Game {
             if (!b.isAlive) this.bullets.splice(i, 1);
         }
 
-        // --- ZOMBİLER UPDATE ---
+        // Zombiler Update
         if (this.waveManager.enable) {
             this.waveManager.update(dt);
         }
@@ -375,7 +370,7 @@ export class Game {
             enemy.update(dt, this.player.getPosition());
         }
 
-        // --- ÇARPIŞMA KONTROLÜ ---
+        // Çarpışma Kontrolü
         this.checkCollisions();
 
         // Hasar Pop-up Update
@@ -415,9 +410,8 @@ export class Game {
         this.uiManager.updateScore(this.score);
     }
 
-
     fireBullet() {
-        if (this.player.shoot()) { // Mermiyi düşür
+        if (this.player.shoot()) {
             this.soundManager.playShootSound(this.player.currentWeapon);
 
             const playerPos = this.player.getPosition();
@@ -447,9 +441,7 @@ export class Game {
                 this.bullets.push(bullet);
             }
 
-            // --- MULTIPLAYER: ATEŞ ETTİĞİMİ BİLDİR ---
             if (this.socket) {
-                // Vektörleri basit sayılara çevirip gönderiyoruz
                 this.socket.emit('playerShoot', {
                     x: spawnPos.x,
                     y: spawnPos.y,
@@ -458,7 +450,7 @@ export class Game {
                     dirY: direction.y,
                     dirZ: direction.z,
                     weaponName: this.player.currentWeapon,
-                    weaponData: { // Karşı tarafta merminin aynı özelliklerde oluşması için
+                    weaponData: {
                         damage: weapon.damage,
                         speed: weapon.bulletSpeed,
                         color: weapon.bulletColor,
@@ -475,11 +467,7 @@ export class Game {
         }
     }
 
-
     checkCollisions() {
-        // -------------------------------------------------------------
-        // 1. MERMİ KONTROLLERİ (Hem Zombi Hem PvP)
-        // -------------------------------------------------------------
         for (const bullet of this.bullets) {
             if (!bullet.isAlive) continue;
 
@@ -487,49 +475,37 @@ export class Game {
                 for (const enemy of this.enemies) {
                     if (!enemy.isAlive) continue;
 
-                    // A) MERMİ - ZOMBİ ÇARPIŞMASI
-                    // DİKKAT: Artık 'waveManager.enable' şartı aramıyoruz.
-                    // Zombi listesi doluysa çarpışma kontrolü yap.
-                    // 2D Mesafe
                     const dx = bullet.mesh.position.x - enemy.mesh.position.x;
                     const dz = bullet.mesh.position.z - enemy.mesh.position.z;
                     const dist = Math.sqrt(dx * dx + dz * dz);
                     const hitRadius = 2.0 * (enemy.mesh.scale.x || 1);
 
                     if (dist < hitRadius) {
-                        // VURDUK!
                         const isCritical = Math.random() < 0.1;
                         const damage = isCritical ? bullet.damage * 3 : bullet.damage;
                         if (isCritical) this.soundManager.playCriticalHit();
 
-                        bullet.kill(); // Mermi her türlü yok olur
-
-                        // --- MODA GÖRE DAVRANIŞ ---
+                        bullet.kill();
 
                         if (this.mode === 'single') {
-                            // TEK OYUNCULU: Direkt hasar ver
                             enemy.takeDamage(damage);
                             this.handleLocalEnemyDeath(enemy, damage, isCritical);
                         }
                         else if (this.mode === 'coop') {
-                            // CO-OP: Sunucuya bildir
-                            // Görsel efekt (Kan/Ses) lokal olarak çıksın ki oyun akıcı hissettirsin
                             const popup = new DamagePopup(this.scene, enemy.mesh.position.clone(), damage, isCritical);
                             this.damagePopups.push(popup);
 
-                            // Sunucuya gönder
                             this.socket.emit('damageEnemy', {
                                 id: enemy.id,
                                 damage: damage
                             });
                         }
 
-                        break; // Mermi yok oldu, diğer zombilere bakma
+                        break;
                     }
                 }
             }
 
-            // B) MERMİ - DİĞER OYUNCU ÇARPIŞMASI (Sadece PvP Modunda)
             if (bullet.isAlive && this.mode === 'pvp') {
                 Object.values(this.remotePlayers).forEach(remotePlayer => {
                     if (!remotePlayer.mesh) return;
@@ -538,14 +514,12 @@ export class Game {
                     const dz = bullet.mesh.position.z - remotePlayer.mesh.position.z;
                     const dist = Math.sqrt(dx * dx + dz * dz);
 
-                    // Oyuncu Hitbox'ı (Yaklaşık 1.0 birim)
                     if (dist < 1.0) {
                         console.log(`🔫 Vurulan Oyuncu: ${remotePlayer.id}`);
 
                         bullet.kill();
                         this.soundManager.playPlayerHurt();
 
-                        // Sunucuya Bildir
                         this.socket.emit('playerHit', {
                             targetId: remotePlayer.id,
                             damage: 10
@@ -555,9 +529,6 @@ export class Game {
             }
         }
 
-        // -------------------------------------------------------------
-        // 2. ZOMBİ - OYUNCU SALDIRISI (Döngüden Bağımsız!)
-        // -------------------------------------------------------------
         if (this.waveManager.enable) {
             for (const enemy of this.enemies) {
                 if (!enemy.isAlive) continue;
@@ -616,19 +587,14 @@ export class Game {
     }
 
     spawnRemoteZombie(data) {
-        // Zaten varsa yaratma
         if (this.enemies.find(e => e.id === data.id)) return;
         console.log(`🧟 Zombi Doğdu (Remote): ${data.id} at ${data.x}, ${data.z}`);
-        // Enemy.js sınıfını kullanıyoruz ama ID özelliğini ekliyoruz
-        // Enemy constructor'ını güncellememiz gerekebilir ama şimdilik JS'in esnekliğini kullanalım
         const enemy = new Enemy(this.scene, new THREE.Vector3(data.x, data.y, data.z), data.type);
-        enemy.id = data.id; // ID'yi sonradan yapıştırıyoruz
+        enemy.id = data.id;
         this.enemies.push(enemy);
     }
 
-    // Singleplayer için ölüm mantığı (checkCollisions içindeki kalabalığı azalttık)
     handleLocalEnemyDeath(enemy, damage, isCritical) {
-        // Popup
         const popup = new DamagePopup(this.scene, enemy.mesh.position.clone(), damage, isCritical);
         this.damagePopups.push(popup);
 
@@ -639,7 +605,6 @@ export class Game {
             if (enemy.type === 'tank') this.score += 30;
             if (enemy.type === 'boss') this.score += 100;
 
-            // Loot
             if (Math.random() < 0.3) {
                 const type = Math.random() < 0.6 ? 'ammo' : 'health';
                 const pickup = new Pickup(this.scene, enemy.mesh.position.clone(), type);
