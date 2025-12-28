@@ -32,8 +32,14 @@ export class MinimapManager {
     }
 
     update() {
-        // Canvas'ı temizle (Eski çizimleri sil)
+    // Canvas'ı temizle (Eski çizimleri sil)
         this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+        if (this.game.obstacleManager) {
+            for (const obstacle of this.game.obstacleManager.obstacles) {
+                if (!obstacle.mesh) continue;
+                this.drawDot(obstacle.mesh.position, '#404040', 2);
+            }
+        }
 
         // --- 2. Zombileri Çiz (Kırmızı Noktalar) ---
         for (const enemy of this.game.enemies) {

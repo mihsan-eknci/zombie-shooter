@@ -16,6 +16,15 @@ const ZOMBIE_TYPES = {
     boss: { hp: 240, speed: 0.10, damage: 40, range: 3.0, scale: 2.5 }
 };
 
+// ✅ EKLENDİ: Engel boyutları (Çarpışma kontrolü için gerekli)
+const OBSTACLE_RADII = {
+    'box': 1.5,
+    'barrel': 0.8,
+    'wall': 2.5,
+    'rock': 1.5,
+    'pillar': 0.8
+};
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -35,10 +44,67 @@ let pickups = {};
 let enemyIdCounter = 0;
 let pickupIdCounter = 0;
 
+// ENGELLER
+let obstacles = [];
+
+// WAVE SİSTEMİ
+let coopWave = {
+    current: 1,
+    zombiesToSpawn: 10,
+    zombiesSpawned: 0,
+    zombiesKilled: 0,
+    spawnTimer: 0,
+    spawnRate: 2.0
+};
+
+// ENGELLER OLUŞTUR
+function generateObstacles() {
+    const types = ['box', 'barrel', 'wall', 'rock', 'pillar'];
+    const mapSize = 150;
+    const halfSize = mapSize / 2 - 10;
+
+    obstacles = [];
+
+    for (let i = 0; i < 25; i++) {
+        const x = (Math.random() - 0.5) * halfSize * 2;
+        const z = (Math.random() - 0.5) * halfSize * 2;
+
+        if (Math.abs(x) < 10 && Math.abs(z) < 10) continue;
+
+        const type = types[Math.floor(Math.random() * types.length)];
+        const rotation = Math.random() * Math.PI * 2;
+
+        obstacles.push({ x, z, type, rotation, id: `obs_${i}` });
+    }
+
+    console.log(`✅ ${obstacles.length} engel oluşturuldu (Sunucu)`);
+}
+
+// ✅ ÇARPIŞMA KONTROLÜ
+function isColliding(x, z, radius) {
+    // Harita sınırları
+    if (x < -75 || x > 75 || z < -75 || z > 75) return true;
+
+    for (const obs of obstacles) {
+        // OBSTACLE_RADII burada kullanılıyor
+        const obsRadius = OBSTACLE_RADII[obs.type] || 1.5;
+
+        const dx = x - obs.x;
+        const dz = z - obs.z;
+        const distance = Math.sqrt(dx*dx + dz*dz);
+
+        if (distance < (radius + obsRadius)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+generateObstacles();
+
 io.on('connection', (socket) => {
     console.log(`🟢 Bağlantı: ${socket.id}`);
 
-    // --- 1. JOIN ---
     socket.on('joinGame', (data) => {
         players[socket.id] = {
             id: socket.id,
@@ -47,7 +113,7 @@ io.on('connection', (socket) => {
             x: 0, y: 0, z: 0,
             rotation: 0,
             weapon: 'pistol',
-            isDead: false // Oyuncunun ölü olup olmadığını takip etmeliyiz
+            isDead: false
         };
 
         socket.join(data.mode);
@@ -59,11 +125,31 @@ io.on('connection', (socket) => {
                 roomPlayers[id] = players[id];
             }
         });
+
         socket.emit('currentPlayers', roomPlayers);
         socket.to(data.mode).emit('newPlayer', players[socket.id]);
+
+        // ✅ Oyuncu girer girmez engelleri gönder
+        socket.emit('obstaclesData', obstacles);
+
+        if (data.mode === 'coop') {
+            socket.emit('waveUpdate', {
+                wave: coopWave.current,
+                remaining: coopWave.zombiesToSpawn - coopWave.zombiesKilled
+            });
+        }
     });
 
-    // --- 2. HAREKET ---
+    socket.on('requestWaveInfo', () => {
+        const player = players[socket.id];
+        if (player && player.room === 'coop') {
+            socket.emit('waveUpdate', {
+                wave: coopWave.current,
+                remaining: coopWave.zombiesToSpawn - coopWave.zombiesKilled
+            });
+        }
+    });
+
     socket.on('playerMovement', (movementData) => {
         const player = players[socket.id];
         if (player) {
@@ -71,11 +157,13 @@ io.on('connection', (socket) => {
             player.y = movementData.y;
             player.z = movementData.z;
             player.rotation = movementData.rotation;
+            player.aimX = movementData.aimX;
+            player.aimZ = movementData.aimZ;
+
             socket.to(player.room).emit('playerMoved', player);
         }
     });
 
-    // --- 3. AKSİYONLAR (Ateş, Silah) ---
     socket.on('playerShoot', (shootData) => {
         const player = players[socket.id];
         if (player) {
@@ -91,7 +179,6 @@ io.on('connection', (socket) => {
         }
     });
 
-    // --- 4. PVP HASAR ---
     socket.on('playerHit', (data) => {
         const victim = players[data.targetId];
         const attacker = players[socket.id];
@@ -104,39 +191,39 @@ io.on('connection', (socket) => {
         }
     });
 
-    // --- 5. OYUNCU ÖLÜMÜ ---
     socket.on('playerDied', () => {
         if (players[socket.id]) {
-            players[socket.id].isDead = true; // Zombiler artık bu oyuncuyu kovalamaz
+            players[socket.id].isDead = true;
             console.log(`💀 Oyuncu öldü: ${socket.id}`);
         }
     });
 
-    // --- 6. ZOMBİYE HASAR (DÜZELTİLEN KISIM) ---
     socket.on('damageEnemy', (data) => {
         const enemy = enemies[data.id];
 
-        // Zombi var mı ve zaten ölü olarak işaretlenmiş mi?
         if (enemy && !enemy.isDead) {
             enemy.hp -= data.damage;
 
             if (enemy.hp <= 0) {
-                // KRİTİK DÜZELTME: Zombiyi hemen "ölü" olarak işaretle
                 enemy.isDead = true;
-
-                // Listeden ve oyundan sil
                 delete enemies[data.id];
-                io.to('coop').emit('enemyDied', { id: data.id, killerId: socket.id });
 
-                // LOOT DROP (Sadece bir kez çalışır çünkü enemy.isDead kontrolü var)
-                if (Math.random() < 0.35) { // Şansı biraz artırdım test için
+                coopWave.zombiesKilled++;
+                io.to('coop').emit('enemyDied', { id: data.id, killerId: socket.id });
+                io.to('coop').emit('waveUpdate', {
+                    wave: coopWave.current,
+                    remaining: coopWave.zombiesToSpawn - coopWave.zombiesKilled
+                });
+
+                if (coopWave.zombiesKilled >= coopWave.zombiesToSpawn) {
+                    startNextWave();
+                }
+
+                if (Math.random() < 0.35) {
                     const pickupId = `pickup_${pickupIdCounter++}`;
                     const type = Math.random() < 0.6 ? 'ammo' : 'health';
                     pickups[pickupId] = {
-                        id: pickupId,
-                        x: enemy.x,
-                        z: enemy.z,
-                        type: type
+                        id: pickupId, x: enemy.x, z: enemy.z, type: type
                     };
                     io.to('coop').emit('pickupSpawn', pickups[pickupId]);
                 }
@@ -144,17 +231,12 @@ io.on('connection', (socket) => {
         }
     });
 
-    // --- 7. EŞYA TOPLAMA ---
     socket.on('playerCollectPickup', (data) => {
         if (pickups[data.id]) {
             const type = pickups[data.id].type;
-            delete pickups[data.id]; // Sunucudan sil
-
-            // Toplayana ve herkese haber ver
+            delete pickups[data.id];
             io.to('coop').emit('pickupCollected', {
-                id: data.id,
-                collectorId: socket.id,
-                type: type
+                id: data.id, collectorId: socket.id, type: type
             });
         }
     });
@@ -169,48 +251,73 @@ io.on('connection', (socket) => {
     });
 });
 
-// --- SUNUCU OYUN DÖNGÜSÜ (AI GÜNCELLEMESİ) ---
+function startNextWave() {
+    coopWave.current++;
+    coopWave.zombiesToSpawn += 5;
+    coopWave.zombiesSpawned = 0;
+    coopWave.zombiesKilled = 0;
+    coopWave.spawnRate = Math.max(0.3, 2.0 - (coopWave.current * 0.15));
+
+    console.log(`🎉 COOP Dalga ${coopWave.current} Başlıyor!`);
+
+    io.to('coop').emit('waveComplete', { nextWave: coopWave.current });
+    io.to('coop').emit('waveUpdate', {
+        wave: coopWave.current,
+        remaining: coopWave.zombiesToSpawn
+    });
+}
+
+// --- SUNUCU OYUN DÖNGÜSÜ ---
 setInterval(() => {
-    // Sadece canlı ve coop odasındaki oyuncular
     const coopPlayers = Object.values(players).filter(p => p.room === 'coop' && !p.isDead);
 
     if (coopPlayers.length > 0) {
-        // 1. SPAWN (Doğurma)
-        if (Object.keys(enemies).length < 15 && Math.random() < 0.05) {
-            const id = `zombie_${enemyIdCounter++}`;
-            // Rastgele bir oyuncunun etrafında doğsun (tamamen rastgele harita yerine)
-            const randomPlayer = coopPlayers[Math.floor(Math.random() * coopPlayers.length)];
+        if (coopWave.zombiesSpawned < coopWave.zombiesToSpawn) {
+            coopWave.spawnTimer += 1/15;
 
-            // Oyuncudan 20-30 birim uzakta doğsun
-            const angle = Math.random() * Math.PI * 2;
-            const distance = 20 + Math.random() * 10;
-            const x = randomPlayer.x + Math.cos(angle) * distance;
-            const z = randomPlayer.z + Math.sin(angle) * distance;
+            if (coopWave.spawnTimer >= coopWave.spawnRate) {
+                coopWave.spawnTimer = 0;
 
-            let type = 'normal';
-            const r = Math.random();
-            if (r > 0.7) type = 'runner';
-            if (r > 0.9) type = 'tank';
+                const id = `zombie_${enemyIdCounter++}`;
+                const randomPlayer = coopPlayers[Math.floor(Math.random() * coopPlayers.length)];
 
-            const stats = ZOMBIE_TYPES[type];
-            enemies[id] = {
-                id: id, x: x, y: 0, z: z,
-                type: type, hp: stats.hp, maxHp: stats.hp,
-                speed: stats.speed, damage: stats.damage, range: stats.range,
-                lastAttackTime: 0,
-                isDead: false // Loot kontrolü için
-            };
-            io.to('coop').emit('enemySpawn', enemies[id]);
+                const angle = Math.random() * Math.PI * 2;
+                const distance = 20 + Math.random() * 10;
+                const x = randomPlayer.x + Math.cos(angle) * distance;
+                const z = randomPlayer.z + Math.sin(angle) * distance;
+
+                let type = 'normal';
+                const r = Math.random();
+                if (coopWave.current >= 2 && r > 0.7) type = 'runner';
+                if (coopWave.current >= 4 && r > 0.9) type = 'tank';
+                if (coopWave.current % 5 === 0 && coopWave.zombiesSpawned === 0) type = 'boss';
+
+                const stats = ZOMBIE_TYPES[type];
+                enemies[id] = {
+                    id: id, x: x, y: 0, z: z,
+                    type: type, hp: stats.hp, maxHp: stats.hp,
+                    speed: stats.speed, damage: stats.damage, range: stats.range,
+                    lastAttackTime: 0,
+                    isDead: false
+                };
+
+                io.to('coop').emit('enemySpawn', enemies[id]);
+                coopWave.zombiesSpawned++;
+
+                io.to('coop').emit('waveUpdate', {
+                    wave: coopWave.current,
+                    remaining: coopWave.zombiesToSpawn - coopWave.zombiesKilled
+                });
+            }
         }
 
-        // 2. AI UPDATE & AGGRO
+        // 2. AI UPDATE & AGGRO (HAREKET MANTIĞI)
         const currentTime = Date.now();
         const enemyList = Object.values(enemies);
 
         enemyList.forEach(enemy => {
             if (enemy.isDead) return;
 
-            // En yakın oyuncuyu bul (Sadece canlı oyuncular)
             let nearestPlayer = null;
             let minDist = Infinity;
 
@@ -223,16 +330,12 @@ setInterval(() => {
             }
 
             if (nearestPlayer) {
-                // Oyuncunun hitbox'ı (0.5) + Zombinin menzili
-                // Saldırı menzili doğrulama
                 const attackRange = enemy.range;
 
                 if (minDist <= attackRange) {
-                    // --- SALDIRI (Server-Side Validation) ---
+                    // Saldırı
                     if (currentTime - enemy.lastAttackTime > 1000) {
                         enemy.lastAttackTime = currentTime;
-
-                        // İstemciye "Bu oyuncuya hasar ver" emri
                         io.to('coop').emit('playerDamaged', {
                             id: nearestPlayer.id,
                             damage: enemy.damage,
@@ -240,16 +343,25 @@ setInterval(() => {
                         });
                     }
                 } else {
-                    // --- HAREKET ---
-                    // Basit bir "Seek" (Kovalama) davranışı
+                    // ✅ DÜZELTİLEN KISIM: ENGEL KONTROLLÜ HAREKET
                     const dx = nearestPlayer.x - enemy.x;
                     const dz = nearestPlayer.z - enemy.z;
 
-                    // Normalize et ve hızla çarp
-                    if (minDist > 0) {
-                        enemy.x += (dx / minDist) * enemy.speed;
-                        enemy.z += (dz / minDist) * enemy.speed;
-                        // Dönüş açısını hesapla (atan2)
+                    if (minDist > 0.1) {
+                        const dirX = dx / minDist;
+                        const dirZ = dz / minDist;
+                        const speed = enemy.speed;
+
+                        // X ekseninde ilerle (Çarpışma yoksa)
+                        if (!isColliding(enemy.x + dirX * speed, enemy.z, 0.8)) {
+                            enemy.x += dirX * speed;
+                        }
+
+                        // Z ekseninde ilerle (Çarpışma yoksa)
+                        if (!isColliding(enemy.x, enemy.z + dirZ * speed, 0.8)) {
+                            enemy.z += dirZ * speed;
+                        }
+
                         enemy.rotation = Math.atan2(dx, dz);
                     }
                 }
@@ -258,7 +370,7 @@ setInterval(() => {
 
         io.to('coop').emit('enemyUpdate', enemies);
     }
-}, 1000 / 15); // 15 FPS
+}, 1000 / 15);
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {

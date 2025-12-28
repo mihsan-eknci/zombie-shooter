@@ -12,6 +12,7 @@ import { Pickup } from '../entities/Pickup.js';
 import { MinimapManager } from '../managers/MinimapManager.js';
 import { RemotePlayer } from '../entities/RemotePlayer.js';
 import { Enemy } from '../entities/Enemy.js';
+import { Obstacle, ObstacleManager } from '../entities/Obstacles.js'; // ✅ Obstacle eklendi
 
 export class Game {
     constructor(socket) {
@@ -48,6 +49,7 @@ export class Game {
         this.score = 0;
         this.pickups = [];
         this.remotePlayers = {};
+        this.obstacleManager = null;
 
         if (this.socket) {
             console.log("🔌 Multiplayer Modu Aktif - Sunucuya bağlanılıyor...");
@@ -62,6 +64,11 @@ export class Game {
                         this.addRemotePlayer(players[id]);
                     }
                 });
+
+                // ✅ İlk bağlantıda wave bilgisini al
+                if (this.mode === 'coop') {
+                    this.socket.emit('requestWaveInfo');
+                }
             });
 
             this.socket.on('newPlayer', (playerInfo) => {
@@ -178,6 +185,51 @@ export class Game {
                     this.uiManager.update();
                 }
             });
+
+            // ✅ WAVE GÜNCELLEMELERİ
+            this.socket.on('waveUpdate', (data) => {
+                console.log(`📊 Wave Güncellendi: Dalga ${data.wave}, Kalan: ${data.remaining}`);
+                if (this.uiManager) {
+                    this.uiManager.updateWaveInfo(data.wave, data.remaining);
+                }
+            });
+
+            this.socket.on('waveComplete', (data) => {
+                console.log(`🎉 Dalga ${data.nextWave} Tamamlandı!`);
+                if (this.soundManager) {
+                    this.soundManager.playWaveComplete();
+                }
+                if (this.uiManager) {
+                    this.uiManager.showWaveComplete(data.nextWave);
+                }
+
+                // Oyuncuya can ver
+                if (this.player.health < this.player.maxHealth) {
+                    this.player.health = Math.min(this.player.maxHealth, this.player.health + 20);
+                    this.uiManager.updateHealth();
+                }
+            });
+
+            // ✅ ENGELLER YÜKLENDİ (Multiplayer)
+            this.socket.on('obstaclesData', (obstaclesData) => {
+                console.log(`📦 ${obstaclesData.length} engel sunucudan yüklendi`);
+
+                // Önce mevcut engelleri temizle
+                if (this.obstacleManager) {
+                    this.obstacleManager.clear();
+                } else {
+                    this.obstacleManager = new ObstacleManager(this.scene, this.config.mapSize);
+                }
+
+                // Sunucudan gelen engelleri oluştur
+                obstaclesData.forEach(obs => {
+                    const position = new THREE.Vector3(obs.x, 0, obs.z);
+                    const obstacle = new Obstacle(this.scene, position, obs.type);
+                    obstacle.mesh.rotation.y = obs.rotation;
+                    obstacle.updateBoundingBox(); // Rotasyon sonrası güncelle
+                    this.obstacleManager.obstacles.push(obstacle);
+                });
+            });
         }
 
         this.init();
@@ -202,6 +254,11 @@ export class Game {
         document.body.appendChild(this.renderer.domElement);
 
         this.world = new World(this.scene, this.config);
+
+        // ✅ Engel sistemi (Single player için, multiplayer sunucudan alacak)
+        this.obstacleManager = new ObstacleManager(this.scene, this.config.mapSize);
+        // Engelleri henüz oluşturma, start() içinde oluşturulacak
+
         this.player = new Player(this.scene, this.soundManager);
         this.uiManager = new UIManager(this.player);
 
@@ -222,11 +279,11 @@ export class Game {
             }
         });
 
-        // ✅ RESUME BUTONU İÇİN EVENT LISTENER (DÜZELTİLDİ)
+        // ✅ RESUME BUTONU İÇİN EVENT LISTENER
         const resumeBtn = document.getElementById('resume-btn');
         if (resumeBtn) {
             resumeBtn.onclick = () => {
-                this.togglePause(); // ✅ Artık togglePause çağırıyor
+                this.togglePause();
             };
         }
 
@@ -235,7 +292,7 @@ export class Game {
 
     // ✅ PAUSE TOGGLE FONKSİYONU
     togglePause() {
-        if (this.player.isDead) return; // Ölüyse pause yapma
+        if (this.player.isDead) return;
 
         this.isPaused = !this.isPaused;
         const pauseMenu = document.getElementById('pause-menu');
@@ -258,6 +315,10 @@ export class Game {
 
         if (mode === 'single') {
             this.waveManager.enable = true;
+            // ✅ Single player için engeller oluştur
+            if (this.obstacleManager && this.obstacleManager.obstacles.length === 0) {
+                this.obstacleManager.generateObstacles(25);
+            }
         }
         else if (mode === 'coop') {
             this.socket.emit('joinGame', { mode: 'coop', name: playerName });
@@ -281,7 +342,23 @@ export class Game {
         if (this.isPaused) return;
 
         const inputs = this.inputManager.keys;
+
+        // ✅ Oyuncu hareketi ve çarpışma kontrolü
+        const oldPlayerPos = this.player.getPosition().clone();
         this.player.update(dt, inputs);
+        const newPlayerPos = this.player.getPosition();
+
+        if (this.obstacleManager) {
+            const resolvedPos = this.obstacleManager.resolveMovement(
+                oldPlayerPos,
+                newPlayerPos,
+                0.5 // Oyuncu yarıçapı
+            );
+
+            if (resolvedPos.x !== newPlayerPos.x || resolvedPos.z !== newPlayerPos.z) {
+                this.player.mesh.position.copy(resolvedPos);
+            }
+        }
 
         // ✅ 1-2-3-4 TUŞLARI İLE SİLAH DEĞİŞTİRME
         if (inputs['1'] && this.player.currentWeapon !== 'pistol') {
@@ -309,7 +386,9 @@ export class Game {
                     x: pPos.x,
                     y: pPos.y,
                     z: pPos.z,
-                    rotation: this.player.mesh.rotation.y
+                    rotation: this.player.mesh.rotation.y,
+                    aimX: this.currentAimPoint.x,
+                    aimZ: this.currentAimPoint.z
                 });
                 this.lastPositionUpdate = Date.now();
             }
@@ -318,7 +397,7 @@ export class Game {
         // ✅ RELOAD (Manuel)
         if ((inputs['r'] || inputs['R']) && !this.player.isReloading) {
             const weapon = this.player.getWeapon();
-            
+
             if (weapon.reserveAmmo > 0 && weapon.currentAmmo < weapon.clipSize) {
                 this.player.reload();
                 this.soundManager.playReloadSound();
@@ -339,7 +418,7 @@ export class Game {
         // ✅ ATEŞ ETME & OTO RELOAD
         if (this.inputManager.isMouseDown && this.player.canShoot()) {
             const weapon = this.player.getWeapon();
-            
+
             if (weapon.currentAmmo > 0) {
                 this.fireBullet();
             } else {
@@ -367,7 +446,22 @@ export class Game {
 
         for (let i = this.enemies.length - 1; i >= 0; i--) {
             const enemy = this.enemies[i];
+            const oldEnemyPos = enemy.mesh.position.clone();
             enemy.update(dt, this.player.getPosition());
+            const newEnemyPos = enemy.mesh.position;
+
+            // ✅ Zombi engel çarpışması
+            if (this.obstacleManager) {
+                const resolvedPos = this.obstacleManager.resolveMovement(
+                    oldEnemyPos,
+                    newEnemyPos,
+                    0.8 // Zombi yarıçapı
+                );
+
+                if (resolvedPos.x !== newEnemyPos.x || resolvedPos.z !== newEnemyPos.z) {
+                    enemy.mesh.position.copy(resolvedPos);
+                }
+            }
         }
 
         // Çarpışma Kontrolü
