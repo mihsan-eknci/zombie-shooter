@@ -52,7 +52,7 @@ export class Game {
         this.obstacleManager = null;
 
         if (this.socket) {
-            console.log("📌 Multiplayer Modu Aktif - Sunucuya bağlanılıyor...");
+            console.log("🔌 Multiplayer Modu Aktif - Sunucuya bağlanılıyor...");
 
             this.socket.on('connect', () => {
                 console.log(`✅ Bağlandı! ID: ${this.socket.id}`);
@@ -94,10 +94,6 @@ export class Game {
                 const direction = new THREE.Vector3(data.dirX, data.dirY, data.dirZ);
 
                 const bullet = new Bullet(this.scene, spawnPos, direction, data.weaponData);
-                
-                // ✅ Mermi sahibini işaretle
-                bullet.ownerId = data.id;
-                
                 this.bullets.push(bullet);
 
                 this.soundManager.playShootSound(data.weaponName || 'pistol');
@@ -211,41 +207,6 @@ export class Game {
                 }
             });
 
-            // ✅ YENİ: PAUSE STATE UPDATE
-            this.socket.on('pauseStateUpdate', (data) => {
-                this.isPaused = data.isPaused;
-                const pauseMenu = document.getElementById('pause-menu');
-                
-                if (this.isPaused) {
-                    pauseMenu.style.display = 'block';
-                    
-                    // Kimin pause ettiğini göster
-                    const pauseText = pauseMenu.querySelector('p');
-                    if (pauseText && data.pausedBy) {
-                        pauseText.innerText = `${data.pausedBy} tarafından duraklatıldı`;
-                    }
-                    
-                    console.log(`⏸️ Oyun duraklatıldı (${data.pausedBy || 'Sunucu'})`);
-                } else {
-                    pauseMenu.style.display = 'none';
-                    console.log("▶️ Oyun devam ediyor");
-                }
-            });
-
-            // ✅ YENİ: ZOMBIE HP UPDATE
-            this.socket.on('enemyHpUpdate', (data) => {
-                const enemy = this.enemies.find(e => e.id === data.id);
-                if (enemy && enemy.isAlive) {
-                    enemy.health = data.hp;
-                    enemy.maxHealth = data.maxHp;
-                    
-                    // Can barını güncelle
-                    if (enemy.updateHealthBar) {
-                        enemy.updateHealthBar();
-                    }
-                }
-            });
-
             this.socket.on('obstaclesData', (obstaclesData) => {
                 console.log(`📦 ${obstaclesData.length} engel sunucudan yüklendi`);
 
@@ -322,24 +283,15 @@ export class Game {
     togglePause() {
         if (this.player.isDead) return;
 
-        // ✅ MULTIPLAYER İÇİN SUNUCUYA PAUSE İSTEĞİ GÖNDER
-        if (this.mode === 'coop' || this.mode === 'pvp') {
-            if (this.socket) {
-                this.socket.emit('requestPause');
-            }
-        } 
-        // ✅ SINGLE PLAYER İÇİN LOCAL PAUSE
-        else {
-            this.isPaused = !this.isPaused;
-            const pauseMenu = document.getElementById('pause-menu');
+        this.isPaused = !this.isPaused;
+        const pauseMenu = document.getElementById('pause-menu');
 
-            if (this.isPaused) {
-                pauseMenu.style.display = 'block';
-                console.log("⏸️ Oyun duraklatıldı");
-            } else {
-                pauseMenu.style.display = 'none';
-                console.log("▶️ Oyun devam ediyor");
-            }
+        if (this.isPaused) {
+            pauseMenu.style.display = 'block';
+            console.log("⏸️ Oyun duraklatıldı");
+        } else {
+            pauseMenu.style.display = 'none';
+            console.log("▶️ Oyun devam ediyor");
         }
     }
 
@@ -554,10 +506,6 @@ export class Game {
                     size: weapon.bulletSize,
                     lifeTime: 2.0
                 });
-                
-                // ✅ Mermi sahibini işaretle
-                bullet.ownerId = this.socket ? this.socket.id : 'local';
-                
                 this.bullets.push(bullet);
             }
 
@@ -590,6 +538,25 @@ export class Game {
     checkCollisions() {
         for (const bullet of this.bullets) {
             if (!bullet.isAlive) continue;
+
+            // ✅✅✅ YENİ: ENGEL ÇARPIŞMASI ✅✅✅
+            if (this.obstacleManager) {
+                const bulletPos = new THREE.Vector3(
+                    bullet.mesh.position.x,
+                    0,
+                    bullet.mesh.position.z
+                );
+                
+                if (this.obstacleManager.checkCollision(bulletPos, 0.3)) {
+                    // Metalik duvara çarpma sesi
+                    this.soundManager.playTone(800, 0.05, 'square', 0.3);
+                    
+                    // Mermiyi yok et
+                    bullet.kill();
+                    continue; // Sonraki mermiye geç
+                }
+            }
+            // ✅✅✅ ENGEL KONTROLÜ BİTTİ ✅✅✅
 
             if (this.enemies.length > 0) {
                 for (const enemy of this.enemies) {
@@ -627,9 +594,6 @@ export class Game {
             }
 
             if (bullet.isAlive && this.mode === 'pvp') {
-                // ✅ DÜZELTİLDİ: Sadece BAŞKASININ mermileri hasar versin
-                const myBullet = !bullet.ownerId || bullet.ownerId === this.socket.id;
-                
                 Object.values(this.remotePlayers).forEach(remotePlayer => {
                     if (!remotePlayer.mesh) return;
 
@@ -638,19 +602,15 @@ export class Game {
                     const dist = Math.sqrt(dx * dx + dz * dz);
 
                     if (dist < 1.0) {
-                        // Eğer bu BENİM mermim ise
-                        if (myBullet) {
-                            console.log(`🔫 Vurulan Oyuncu: ${remotePlayer.id}`);
-                            bullet.kill();
-                            this.soundManager.playPlayerHurt();
+                        console.log(`🔫 Vurulan Oyuncu: ${remotePlayer.id}`);
 
-                            this.socket.emit('playerHit', {
-                                targetId: remotePlayer.id,
-                                damage: 10
-                            });
-                        }
-                        // Eğer bu BAŞKASININ mermisi ise, hasar sunucudan gelecek
-                        // Burada bir şey yapma
+                        bullet.kill();
+                        this.soundManager.playPlayerHurt();
+
+                        this.socket.emit('playerHit', {
+                            targetId: remotePlayer.id,
+                            damage: 10
+                        });
                     }
                 });
             }
