@@ -46,12 +46,6 @@ let pickupIdCounter = 0;
 // ENGELLER
 let obstacles = [];
 
-// ✅ PAUSE SİSTEMİ (YENİ)
-let roomPauseStatus = {
-    coop: false,
-    pvp: false
-};
-
 // WAVE SİSTEMİ
 let coopWave = {
     current: 1,
@@ -85,12 +79,14 @@ function generateObstacles() {
     console.log(`✅ ${obstacles.length} engel oluşturuldu (Sunucu)`);
 }
 
-// ✅ ÇARPIŞMA KONTROLÜ
+// ÇARPIŞMA KONTROLÜ
 function isColliding(x, z, radius) {
+    // Harita sınırları
     if (x < -75 || x > 75 || z < -75 || z > 75) return true;
 
     for (const obs of obstacles) {
         const obsRadius = OBSTACLE_RADII[obs.type] || 1.5;
+
         const dx = x - obs.x;
         const dz = z - obs.z;
         const distance = Math.sqrt(dx*dx + dz*dz);
@@ -131,6 +127,7 @@ io.on('connection', (socket) => {
         socket.emit('currentPlayers', roomPlayers);
         socket.to(data.mode).emit('newPlayer', players[socket.id]);
 
+        // Oyuncu girer girmez engelleri gönder
         socket.emit('obstaclesData', obstacles);
 
         if (data.mode === 'coop') {
@@ -138,27 +135,6 @@ io.on('connection', (socket) => {
                 wave: coopWave.current,
                 remaining: coopWave.zombiesToSpawn - coopWave.zombiesKilled
             });
-            
-            // ✅ Pause durumunu gönder
-            socket.emit('pauseStateUpdate', { isPaused: roomPauseStatus.coop });
-        }
-    });
-
-    // ✅ YENİ: PAUSE İSTEĞİ
-    socket.on('requestPause', () => {
-        const player = players[socket.id];
-        if (!player) return;
-
-        const room = player.room;
-        if (room === 'coop' || room === 'pvp') {
-            roomPauseStatus[room] = !roomPauseStatus[room];
-            
-            io.to(room).emit('pauseStateUpdate', { 
-                isPaused: roomPauseStatus[room],
-                pausedBy: player.name 
-            });
-            
-            console.log(`⏸️ ${room.toUpperCase()} - Pause: ${roomPauseStatus[room]} (${player.name})`);
         }
     });
 
@@ -201,15 +177,19 @@ io.on('connection', (socket) => {
         }
     });
 
+    // ✅✅✅ DÜZELTİLDİ: SADECE VURULAN OYUNCUYA GÖNDER ✅✅✅
     socket.on('playerHit', (data) => {
         const victim = players[data.targetId];
         const attacker = players[socket.id];
         if (victim && attacker && victim.room === attacker.room) {
-            io.to(victim.room).emit('playerDamaged', {
+            // ✅ Sadece vurulan oyuncuya hasar paketi gönder (tüm odaya değil!)
+            io.to(data.targetId).emit('playerDamaged', {
                 id: data.targetId,
                 damage: data.damage,
                 attackerId: attacker.id
             });
+            
+            console.log(`🔫 ${attacker.name} -> ${victim.name} (Hasar: ${data.damage})`);
         }
     });
 
@@ -225,13 +205,6 @@ io.on('connection', (socket) => {
 
         if (enemy && !enemy.isDead) {
             enemy.hp -= data.damage;
-
-            // ✅ HP güncellemesini HERKESE gönder
-            io.to('coop').emit('enemyHpUpdate', {
-                id: data.id,
-                hp: enemy.hp,
-                maxHp: enemy.maxHp
-            });
 
             if (enemy.hp <= 0) {
                 enemy.isDead = true;
@@ -300,13 +273,7 @@ function startNextWave() {
 setInterval(() => {
     const coopPlayers = Object.values(players).filter(p => p.room === 'coop' && !p.isDead);
 
-    // ✅ PAUSE KONTROLÜ
-    if (roomPauseStatus.coop) {
-        return; // Oyun duraklatıldı, hiçbir şey yapma
-    }
-
-    // ✅ EN AZ 2 OYUNCU KONTROLÜ
-    if (coopPlayers.length >= 2) {
+    if (coopPlayers.length > 0) {
         if (coopWave.zombiesSpawned < coopWave.zombiesToSpawn) {
             coopWave.spawnTimer += 1/15;
 
@@ -316,31 +283,10 @@ setInterval(() => {
                 const id = `zombie_${enemyIdCounter++}`;
                 const randomPlayer = coopPlayers[Math.floor(Math.random() * coopPlayers.length)];
 
-                // ✅ DÜZELTİLDİ: Harita sınırlarından doğ
-                const mapSize = 150;
-                const halfSize = mapSize / 2 - 5;
-                
-                let x, z;
-                const side = Math.floor(Math.random() * 4);
-                
-                switch(side) {
-                    case 0: // Kuzey
-                        x = (Math.random() - 0.5) * mapSize;
-                        z = -halfSize;
-                        break;
-                    case 1: // Güney
-                        x = (Math.random() - 0.5) * mapSize;
-                        z = halfSize;
-                        break;
-                    case 2: // Batı
-                        x = -halfSize;
-                        z = (Math.random() - 0.5) * mapSize;
-                        break;
-                    case 3: // Doğu
-                        x = halfSize;
-                        z = (Math.random() - 0.5) * mapSize;
-                        break;
-                }
+                const angle = Math.random() * Math.PI * 2;
+                const distance = 20 + Math.random() * 10;
+                const x = randomPlayer.x + Math.cos(angle) * distance;
+                const z = randomPlayer.z + Math.sin(angle) * distance;
 
                 let type = 'normal';
                 const r = Math.random();
@@ -367,7 +313,7 @@ setInterval(() => {
             }
         }
 
-        // AI UPDATE & AGGRO
+        // 2. AI UPDATE & AGGRO (HAREKET MANTIĞI)
         const currentTime = Date.now();
         const enemyList = Object.values(enemies);
 
@@ -389,6 +335,7 @@ setInterval(() => {
                 const attackRange = enemy.range;
 
                 if (minDist <= attackRange) {
+                    // Saldırı
                     if (currentTime - enemy.lastAttackTime > 1000) {
                         enemy.lastAttackTime = currentTime;
                         io.to('coop').emit('playerDamaged', {
@@ -398,6 +345,7 @@ setInterval(() => {
                         });
                     }
                 } else {
+                    // DÜZELTİLEN KISIM: ENGEL KONTROLLÜ HAREKET
                     const dx = nearestPlayer.x - enemy.x;
                     const dz = nearestPlayer.z - enemy.z;
 
@@ -406,10 +354,12 @@ setInterval(() => {
                         const dirZ = dz / minDist;
                         const speed = enemy.speed;
 
+                        // X ekseninde ilerle (Çarpışma yoksa)
                         if (!isColliding(enemy.x + dirX * speed, enemy.z, 0.8)) {
                             enemy.x += dirX * speed;
                         }
 
+                        // Z ekseninde ilerle (Çarpışma yoksa)
                         if (!isColliding(enemy.x, enemy.z + dirZ * speed, 0.8)) {
                             enemy.z += dirZ * speed;
                         }
