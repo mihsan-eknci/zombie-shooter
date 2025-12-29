@@ -1,704 +1,430 @@
-// src/core/Game.js
-import * as THREE from 'three';
-import { Player } from '../entities/Player.js';
-import { World } from './World.js';
-import { InputManager } from './InputManager.js';
-import { Bullet } from '../entities/Bullet.js';
-import { DamagePopup } from '../entities/DamagePopup.js';
-import { UIManager } from '../managers/UIManager.js';
-import { WaveManager } from '../managers/WaveManager.js';
-import { SoundManager } from '../managers/SoundManager.js';
-import { Pickup } from '../entities/Pickup.js';
-import { MinimapManager } from '../managers/MinimapManager.js';
-import { RemotePlayer } from '../entities/RemotePlayer.js';
-import { Enemy } from '../entities/Enemy.js';
-import { Obstacle, ObstacleManager } from '../entities/Obstacles.js';
+import express from 'express';
+import http from 'http';
+import { Server } from 'socket.io';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
-export class Game {
-    constructor(socket) {
-        this.socket = socket;
-        this.config = {
-            viewSize: 15,
-            cameraOffset: 25,
-            mapSize: 150,
-            wallHeight: 5
-        };
+// Yardımcı Fonksiyon: İki nokta arası mesafe
+function getDistance(e, p) {
+    return Math.sqrt((e.x - p.x) ** 2 + (e.z - p.z) ** 2);
+}
 
-        this.scene = null;
-        this.camera = null;
-        this.renderer = null;
-        this.clock = new THREE.Clock();
+const ZOMBIE_TYPES = {
+    normal: { hp: 20, speed: 0.15, damage: 10, range: 1.5, scale: 1.0 },
+    runner: { hp: 10, speed: 0.25, damage: 5, range: 1.3, scale: 0.8 },
+    tank: { hp: 120, speed: 0.08, damage: 20, range: 2.0, scale: 1.6 },
+    boss: { hp: 240, speed: 0.10, damage: 40, range: 3.0, scale: 2.5 }
+};
 
-        this.raycaster = new THREE.Raycaster();
-        this.aimPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
-        this.currentAimPoint = new THREE.Vector3();
+const OBSTACLE_RADII = {
+    'box': 1.5,
+    'barrel': 0.8,
+    'wall': 2.5,
+    'rock': 1.5,
+    'pillar': 0.8
+};
 
-        this.inputManager = new InputManager();
-        this.soundManager = new SoundManager();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-        this.world = null;
-        this.player = null;
-        this.uiManager = null;
-        this.waveManager = null;
-        this.minimapManager = null;
+const app = express();
+const server = http.createServer(app);
 
-        this.bullets = [];
-        this.enemies = [];
-        this.damagePopups = [];
-        this.isPaused = false;
-        this.score = 0;
-        this.pickups = [];
-        this.remotePlayers = {};
-        this.obstacleManager = null;
+const io = new Server(server, {
+    cors: { origin: "*", methods: ["GET", "POST"] }
+});
 
-        if (this.socket) {
-            console.log("🔌 Multiplayer Modu Aktif - Sunucuya bağlanılıyor...");
+app.use(express.static(path.join(__dirname, 'dist')));
 
-            this.socket.on('connect', () => {
-                console.log(`✅ Bağlandı! ID: ${this.socket.id}`);
-            });
+// DURUM YÖNETİMİ
+let players = {};
+let enemies = {};
+let pickups = {};
+let enemyIdCounter = 0;
+let pickupIdCounter = 0;
 
-            this.socket.on('currentPlayers', (players) => {
-                Object.keys(players).forEach((id) => {
-                    if (id !== this.socket.id) {
-                        this.addRemotePlayer(players[id]);
-                    }
-                });
+// ENGELLER
+let obstacles = [];
 
-                if (this.mode === 'coop') {
-                    this.socket.emit('requestWaveInfo');
-                }
-            });
+// ✅ PAUSE SİSTEMİ (YENİ)
+let roomPauseStatus = {
+    coop: false,
+    pvp: false
+};
 
-            this.socket.on('newPlayer', (playerInfo) => {
-                this.addRemotePlayer(playerInfo);
-                console.log("Yeni oyuncu katıldı:", playerInfo.id);
-            });
+// WAVE SİSTEMİ
+let coopWave = {
+    current: 1,
+    zombiesToSpawn: 10,
+    zombiesSpawned: 0,
+    zombiesKilled: 0,
+    spawnTimer: 0,
+    spawnRate: 2.0
+};
 
-            this.socket.on('playerMoved', (playerInfo) => {
-                if (this.remotePlayers[playerInfo.id]) {
-                    this.remotePlayers[playerInfo.id].updatePosition(playerInfo);
-                }
-            });
+// ENGELLER OLUŞTUR
+function generateObstacles() {
+    const types = ['box', 'barrel', 'wall', 'rock', 'pillar'];
+    const mapSize = 150;
+    const halfSize = mapSize / 2 - 10;
 
-            this.socket.on('playerDisconnected', (id) => {
-                if (this.remotePlayers[id]) {
-                    this.remotePlayers[id].delete();
-                    delete this.remotePlayers[id];
-                    console.log("Oyuncu ayrıldı:", id);
-                }
-            });
+    obstacles = [];
 
-            this.socket.on('remotePlayerShoot', (data) => {
-                const spawnPos = new THREE.Vector3(data.x, data.y, data.z);
-                const direction = new THREE.Vector3(data.dirX, data.dirY, data.dirZ);
+    for (let i = 0; i < 25; i++) {
+        const x = (Math.random() - 0.5) * halfSize * 2;
+        const z = (Math.random() - 0.5) * halfSize * 2;
 
-                const bullet = new Bullet(this.scene, spawnPos, direction, data.weaponData);
-                this.bullets.push(bullet);
+        if (Math.abs(x) < 10 && Math.abs(z) < 10) continue;
 
-                this.soundManager.playShootSound(data.weaponName || 'pistol');
+        const type = types[Math.floor(Math.random() * types.length)];
+        const rotation = Math.random() * Math.PI * 2;
 
-                const flash = new THREE.PointLight(0xffff00, 2, 10);
-                flash.position.copy(spawnPos);
-                this.scene.add(flash);
-                setTimeout(() => this.scene.remove(flash), 50);
-            });
-
-            this.socket.on('playerDamaged', (data) => {
-                if (data.id === this.socket.id) {
-                    this.player.takeDamage(data.damage);
-                    this.soundManager.playPlayerHurt();
-                    this.uiManager.updateHealth();
-
-                    const overlay = document.getElementById('damage-overlay');
-                    if (overlay) {
-                        overlay.style.opacity = "1";
-                        setTimeout(() => overlay.style.opacity = "0", 300);
-                    } else {
-                        document.body.style.backgroundColor = "rgba(255, 0, 0, 0.4)";
-                        setTimeout(() => document.body.style.backgroundColor = "#ad8a6c", 100);
-                    }
-
-                    console.log(`💔 Vuruldum! Kalan Can: ${this.player.health}`);
-
-                    if (this.player.health <= 0 && !this.player.isDead) {
-                        this.player.isDead = true;
-                        this.socket.emit('playerDied');
-                        this.uiManager.showGameOver(this.score);
-                        this.isPaused = true;
-                    }
-                }
-            });
-
-            this.socket.on('enemyUpdate', (serverEnemies) => {
-                Object.values(serverEnemies).forEach(sEnemy => {
-                    let localEnemy = this.enemies.find(e => e.id === sEnemy.id);
-
-                    if (localEnemy) {
-                        localEnemy.mesh.position.set(sEnemy.x, sEnemy.y, sEnemy.z);
-                        localEnemy.mesh.lookAt(sEnemy.x + Math.sin(sEnemy.rotation), sEnemy.y, sEnemy.z + Math.cos(sEnemy.rotation));
-                    }
-                });
-            });
-
-            this.socket.on('enemySpawn', (sEnemy) => {
-                this.spawnRemoteZombie(sEnemy);
-            });
-
-            this.socket.on('enemyDied', (data) => {
-                const enemy = this.enemies.find(e => e.id === data.id);
-                if (enemy) {
-                    this.soundManager.playZombieDeath();
-                    enemy.kill();
-
-                    if (data.killerId === this.socket.id) {
-                        this.score += 10;
-                    }
-                }
-            });
-
-            this.socket.on('pickupSpawn', (data) => {
-                const p = new Pickup(this.scene, new THREE.Vector3(data.x, 0, data.z), data.type);
-                p.id = data.id;
-                this.pickups.push(p);
-            });
-
-            this.socket.on('pickupCollected', (data) => {
-                const index = this.pickups.findIndex(p => p.id === data.id);
-                if (index !== -1) {
-                    this.pickups[index].isAlive = false;
-                    this.pickups[index].mesh.visible = false;
-                }
-
-                if (data.collectorId === this.socket.id) {
-                    this.soundManager.playPickupSound(data.type);
-
-                    if (data.type === 'health') {
-                        this.player.health = Math.min(this.player.maxHealth, this.player.health + 20);
-                    }
-                    else if (data.type === 'ammo') {
-                        const weapon = this.player.getWeapon();
-                        weapon.reserveAmmo = Math.min(weapon.maxReserveAmmo, weapon.reserveAmmo + 30);
-                    }
-
-                    this.uiManager.update();
-                }
-            });
-
-            this.socket.on('waveUpdate', (data) => {
-                console.log(`📊 Wave Güncellendi: Dalga ${data.wave}, Kalan: ${data.remaining}`);
-                if (this.uiManager) {
-                    this.uiManager.updateWaveInfo(data.wave, data.remaining);
-                }
-            });
-
-            this.socket.on('waveComplete', (data) => {
-                console.log(`🎉 Dalga ${data.nextWave} Tamamlandı!`);
-                if (this.soundManager) {
-                    this.soundManager.playWaveComplete();
-                }
-                if (this.uiManager) {
-                    this.uiManager.showWaveComplete(data.nextWave);
-                }
-
-                if (this.player.health < this.player.maxHealth) {
-                    this.player.health = Math.min(this.player.maxHealth, this.player.health + 20);
-                    this.uiManager.updateHealth();
-                }
-            });
-
-            this.socket.on('obstaclesData', (obstaclesData) => {
-                console.log(`📦 ${obstaclesData.length} engel sunucudan yüklendi`);
-
-                if (this.obstacleManager) {
-                    this.obstacleManager.clear();
-                } else {
-                    this.obstacleManager = new ObstacleManager(this.scene, this.config.mapSize);
-                }
-
-                obstaclesData.forEach(obs => {
-                    const position = new THREE.Vector3(obs.x, 0, obs.z);
-                    const obstacle = new Obstacle(this.scene, position, obs.type);
-                    obstacle.mesh.rotation.y = obs.rotation;
-                    obstacle.updateBoundingBox();
-                    this.obstacleManager.obstacles.push(obstacle);
-                });
-            });
-        }
-
-        this.init();
+        obstacles.push({ x, z, type, rotation, id: `obs_${i}` });
     }
 
-    init() {
-        this.scene = new THREE.Scene();
-        this.scene.background = new THREE.Color(0xad8a6c);
+    console.log(`✅ ${obstacles.length} engel oluşturuldu (Sunucu)`);
+}
 
-        const aspect = window.innerWidth / window.innerHeight;
-        this.camera = new THREE.OrthographicCamera(
-            -this.config.viewSize * aspect, this.config.viewSize * aspect,
-            this.config.viewSize, -this.config.viewSize,
-            -2000, 10000
-        );
-        this.camera.position.set(this.config.cameraOffset, this.config.cameraOffset, this.config.cameraOffset);
-        this.camera.lookAt(0, 0, 0);
+// ✅ ÇARPIŞMA KONTROLÜ
+function isColliding(x, z, radius) {
+    if (x < -75 || x > 75 || z < -75 || z > 75) return true;
 
-        this.renderer = new THREE.WebGLRenderer({ antialias: true });
-        this.renderer.setSize(window.innerWidth, window.innerHeight);
-        this.renderer.shadowMap.enabled = true;
-        document.body.appendChild(this.renderer.domElement);
+    for (const obs of obstacles) {
+        const obsRadius = OBSTACLE_RADII[obs.type] || 1.5;
+        const dx = x - obs.x;
+        const dz = z - obs.z;
+        const distance = Math.sqrt(dx*dx + dz*dz);
 
-        this.world = new World(this.scene, this.config);
+        if (distance < (radius + obsRadius)) {
+            return true;
+        }
+    }
+    return false;
+}
 
-        this.obstacleManager = new ObstacleManager(this.scene, this.config.mapSize);
+generateObstacles();
 
-        this.player = new Player(this.scene, this.soundManager);
-        this.uiManager = new UIManager(this.player);
+io.on('connection', (socket) => {
+    console.log(`🟢 Bağlantı: ${socket.id}`);
 
-        this.waveManager = new WaveManager(
-            this.scene,
-            this.player,
-            this.config.mapSize,
-            this.uiManager,
-            this.soundManager
-        );
-        this.waveManager.setEnemiesArray(this.enemies);
-        this.minimapManager = new MinimapManager(this);
+    socket.on('joinGame', (data) => {
+        players[socket.id] = {
+            id: socket.id,
+            name: data.name,
+            room: data.mode,
+            x: 0, y: 0, z: 0,
+            rotation: 0,
+            weapon: 'pistol',
+            isDead: false
+        };
 
-        window.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape') {
-                this.togglePause();
+        socket.join(data.mode);
+        console.log(`🎮 ${data.name} -> ${data.mode}`);
+
+        const roomPlayers = {};
+        Object.keys(players).forEach(id => {
+            if (players[id].room === data.mode && id !== socket.id) {
+                roomPlayers[id] = players[id];
             }
         });
 
-        const resumeBtn = document.getElementById('resume-btn');
-        if (resumeBtn) {
-            resumeBtn.onclick = () => {
-                this.togglePause();
-            };
+        socket.emit('currentPlayers', roomPlayers);
+        socket.to(data.mode).emit('newPlayer', players[socket.id]);
+
+        socket.emit('obstaclesData', obstacles);
+
+        if (data.mode === 'coop') {
+            socket.emit('waveUpdate', {
+                wave: coopWave.current,
+                remaining: coopWave.zombiesToSpawn - coopWave.zombiesKilled
+            });
+            
+            // ✅ Pause durumunu gönder
+            socket.emit('pauseStateUpdate', { isPaused: roomPauseStatus.coop });
         }
+    });
 
-        window.addEventListener('resize', () => this.onWindowResize());
-    }
+    // ✅ YENİ: PAUSE İSTEĞİ
+    socket.on('requestPause', () => {
+        const player = players[socket.id];
+        if (!player) return;
 
-    togglePause() {
-        if (this.player.isDead) return;
-
-        this.isPaused = !this.isPaused;
-        const pauseMenu = document.getElementById('pause-menu');
-
-        if (this.isPaused) {
-            pauseMenu.style.display = 'block';
-            console.log("⏸️ Oyun duraklatıldı");
-        } else {
-            pauseMenu.style.display = 'none';
-            console.log("▶️ Oyun devam ediyor");
+        const room = player.room;
+        if (room === 'coop' || room === 'pvp') {
+            roomPauseStatus[room] = !roomPauseStatus[room];
+            
+            io.to(room).emit('pauseStateUpdate', { 
+                isPaused: roomPauseStatus[room],
+                pausedBy: player.name 
+            });
+            
+            console.log(`⏸️ ${room.toUpperCase()} - Pause: ${roomPauseStatus[room]} (${player.name})`);
         }
-    }
+    });
 
-    start(mode, playerName) {
-        this.mode = mode;
-        this.playerName = playerName;
-        this.isPaused = false;
-
-        console.log(`🚀 Mod Yüklendi: ${mode}`);
-
-        if (mode === 'single') {
-            this.waveManager.enable = true;
-            if (this.obstacleManager && this.obstacleManager.obstacles.length === 0) {
-                this.obstacleManager.generateObstacles(25);
-            }
+    socket.on('requestWaveInfo', () => {
+        const player = players[socket.id];
+        if (player && player.room === 'coop') {
+            socket.emit('waveUpdate', {
+                wave: coopWave.current,
+                remaining: coopWave.zombiesToSpawn - coopWave.zombiesKilled
+            });
         }
-        else if (mode === 'coop') {
-            this.socket.emit('joinGame', { mode: 'coop', name: playerName });
-            this.waveManager.enable = false;
-            this.enemies.forEach(e => e.kill());
-            this.enemies = [];
+    });
+
+    socket.on('playerMovement', (movementData) => {
+        const player = players[socket.id];
+        if (player) {
+            player.x = movementData.x;
+            player.y = movementData.y;
+            player.z = movementData.z;
+            player.rotation = movementData.rotation;
+            player.aimX = movementData.aimX;
+            player.aimZ = movementData.aimZ;
+
+            socket.to(player.room).emit('playerMoved', player);
         }
-        else if (mode === 'pvp') {
-            this.socket.emit('joinGame', { mode: 'pvp', name: playerName });
-            this.waveManager.enable = false;
-            this.enemies.forEach(e => e.kill());
-            this.enemies = [];
+    });
+
+    socket.on('playerShoot', (shootData) => {
+        const player = players[socket.id];
+        if (player) {
+            socket.to(player.room).emit('remotePlayerShoot', { id: socket.id, ...shootData });
         }
+    });
 
-        this.player.name = playerName;
-        this.animate();
-    }
-
-    update(dt) {
-        if (this.isPaused) return;
-
-        const inputs = this.inputManager.keys;
-
-        const oldPlayerPos = this.player.getPosition().clone();
-        this.player.update(dt, inputs);
-        const newPlayerPos = this.player.getPosition();
-
-        if (this.obstacleManager) {
-            const resolvedPos = this.obstacleManager.resolveMovement(
-                oldPlayerPos,
-                newPlayerPos,
-                0.5
-            );
-
-            if (resolvedPos.x !== newPlayerPos.x || resolvedPos.z !== newPlayerPos.z) {
-                this.player.mesh.position.copy(resolvedPos);
-            }
+    socket.on('weaponSwitch', (weaponName) => {
+        const player = players[socket.id];
+        if (player) {
+            player.weapon = weaponName;
+            socket.to(player.room).emit('playerSwitchedWeapon', { id: socket.id, weapon: weaponName });
         }
+    });
 
-        if (inputs['1'] && this.player.currentWeapon !== 'pistol') {
-            this.player.switchWeapon('pistol');
-            this.uiManager.update();
+    socket.on('playerHit', (data) => {
+        const victim = players[data.targetId];
+        const attacker = players[socket.id];
+        if (victim && attacker && victim.room === attacker.room) {
+            io.to(victim.room).emit('playerDamaged', {
+                id: data.targetId,
+                damage: data.damage,
+                attackerId: attacker.id
+            });
         }
-        if (inputs['2'] && this.player.currentWeapon !== 'shotgun') {
-            this.player.switchWeapon('shotgun');
-            this.uiManager.update();
+    });
+
+    socket.on('playerDied', () => {
+        if (players[socket.id]) {
+            players[socket.id].isDead = true;
+            console.log(`💀 Oyuncu öldü: ${socket.id}`);
         }
-        if (inputs['3'] && this.player.currentWeapon !== 'rifle') {
-            this.player.switchWeapon('rifle');
-            this.uiManager.update();
-        }
-        if (inputs['4'] && this.player.currentWeapon !== 'sniper') {
-            this.player.switchWeapon('sniper');
-            this.uiManager.update();
-        }
+    });
 
-        if (this.socket && (this.mode === 'coop' || this.mode === 'pvp')) {
-            const pPos = this.player.getPosition();
+    socket.on('damageEnemy', (data) => {
+        const enemy = enemies[data.id];
 
-            if (!this.lastPositionUpdate || Date.now() - this.lastPositionUpdate > 50) {
-                this.socket.emit('playerMovement', {
-                    x: pPos.x,
-                    y: pPos.y,
-                    z: pPos.z,
-                    rotation: this.player.mesh.rotation.y,
-                    aimX: this.currentAimPoint.x,
-                    aimZ: this.currentAimPoint.z
-                });
-                this.lastPositionUpdate = Date.now();
-            }
-        }
+        if (enemy && !enemy.isDead) {
+            enemy.hp -= data.damage;
 
-        if ((inputs['r'] || inputs['R']) && !this.player.isReloading) {
-            const weapon = this.player.getWeapon();
-
-            if (weapon.reserveAmmo > 0 && weapon.currentAmmo < weapon.clipSize) {
-                this.player.reload();
-                this.soundManager.playReloadSound();
-                this.uiManager.updateAmmo();
-            } else if (weapon.reserveAmmo === 0) {
-                console.log("❌ Depo boş! Mermi bulamıyorsun.");
-            }
-        }
-
-        this.raycaster.setFromCamera(this.inputManager.mouse, this.camera);
-        const intersection = new THREE.Vector3();
-        if (this.raycaster.ray.intersectPlane(this.aimPlane, intersection)) {
-            this.player.lookAt(intersection);
-            this.currentAimPoint.copy(intersection);
-        }
-
-        if (this.inputManager.isMouseDown && this.player.canShoot()) {
-            const weapon = this.player.getWeapon();
-
-            if (weapon.currentAmmo > 0) {
-                this.fireBullet();
-            } else {
-                if (weapon.reserveAmmo > 0) {
-                    this.player.reload();
-                    this.soundManager.playReloadSound();
-                    this.uiManager.updateAmmo();
-                } else {
-                    console.log("❌ Mermi bitti! Yerden mermi topla.");
-                }
-            }
-        }
-
-        for (let i = this.bullets.length - 1; i >= 0; i--) {
-            const b = this.bullets[i];
-            b.update(dt);
-            if (!b.isAlive) this.bullets.splice(i, 1);
-        }
-
-        if (this.waveManager.enable) {
-            this.waveManager.update(dt);
-        }
-
-        for (let i = this.enemies.length - 1; i >= 0; i--) {
-            const enemy = this.enemies[i];
-            const oldEnemyPos = enemy.mesh.position.clone();
-            enemy.update(dt, this.player.getPosition());
-            const newEnemyPos = enemy.mesh.position;
-
-            if (this.obstacleManager) {
-                const resolvedPos = this.obstacleManager.resolveMovement(
-                    oldEnemyPos,
-                    newEnemyPos,
-                    0.8
-                );
-
-                if (resolvedPos.x !== newEnemyPos.x || resolvedPos.z !== newEnemyPos.z) {
-                    enemy.mesh.position.copy(resolvedPos);
-                }
-            }
-        }
-
-        this.checkCollisions();
-
-        for (let i = this.damagePopups.length - 1; i >= 0; i--) {
-            const popup = this.damagePopups[i];
-            popup.update(dt);
-            if (!popup.isAlive) this.damagePopups.splice(i, 1);
-        }
-
-        for (let i = this.pickups.length - 1; i >= 0; i--) {
-            const p = this.pickups[i];
-
-            p.update(dt, this.player, (type) => {
-                if (this.mode === 'single') {
-                    this.soundManager.playPickupSound(type);
-                    this.uiManager.update();
-                }
-                else {
-                    if (this.socket) {
-                        this.socket.emit('playerCollectPickup', { id: p.id });
-                    }
-                }
+            // ✅ HP güncellemesini HERKESE gönder
+            io.to('coop').emit('enemyHpUpdate', {
+                id: data.id,
+                hp: enemy.hp,
+                maxHp: enemy.maxHp
             });
 
-            if (!p.isAlive) this.pickups.splice(i, 1);
-        }
+            if (enemy.hp <= 0) {
+                enemy.isDead = true;
+                delete enemies[data.id];
 
-        const pPos = this.player.getPosition();
-        this.camera.position.x = pPos.x + this.config.cameraOffset;
-        this.camera.position.z = pPos.z + this.config.cameraOffset;
-
-        if (this.minimapManager) this.minimapManager.update();
-        this.uiManager.update();
-        this.uiManager.updateScore(this.score);
-    }
-
-    fireBullet() {
-        if (this.player.shoot()) {
-            this.soundManager.playShootSound(this.player.currentWeapon);
-
-            const playerPos = this.player.getPosition();
-            const spawnPos = new THREE.Vector3(playerPos.x, 1.2, playerPos.z);
-            const direction = new THREE.Vector3()
-                .subVectors(this.currentAimPoint, spawnPos)
-                .normalize();
-            direction.y = 0;
-
-            const weapon = this.player.getWeapon();
-            const bulletCount = weapon.bulletCount || 1;
-
-            for (let i = 0; i < bulletCount; i++) {
-                const spreadAngle = weapon.bulletSpread || 0;
-                const randomSpread = (Math.random() - 0.5) * spreadAngle;
-
-                const bulletDir = direction.clone();
-                bulletDir.applyAxisAngle(new THREE.Vector3(0, 1, 0), randomSpread);
-
-                const bullet = new Bullet(this.scene, spawnPos, bulletDir, {
-                    damage: weapon.damage,
-                    speed: weapon.bulletSpeed,
-                    color: weapon.bulletColor,
-                    size: weapon.bulletSize,
-                    lifeTime: 2.0
+                coopWave.zombiesKilled++;
+                io.to('coop').emit('enemyDied', { id: data.id, killerId: socket.id });
+                io.to('coop').emit('waveUpdate', {
+                    wave: coopWave.current,
+                    remaining: coopWave.zombiesToSpawn - coopWave.zombiesKilled
                 });
-                this.bullets.push(bullet);
-            }
 
-            if (this.socket) {
-                this.socket.emit('playerShoot', {
-                    x: spawnPos.x,
-                    y: spawnPos.y,
-                    z: spawnPos.z,
-                    dirX: direction.x,
-                    dirY: direction.y,
-                    dirZ: direction.z,
-                    weaponName: this.player.currentWeapon,
-                    weaponData: {
-                        damage: weapon.damage,
-                        speed: weapon.bulletSpeed,
-                        color: weapon.bulletColor,
-                        size: weapon.bulletSize,
-                        lifeTime: 2.0
-                    }
-                });
-            }
-
-            const flash = new THREE.PointLight(0xffff00, 2, 10);
-            flash.position.copy(spawnPos);
-            this.scene.add(flash);
-            setTimeout(() => this.scene.remove(flash), 50);
-        }
-    }
-
-    checkCollisions() {
-        for (const bullet of this.bullets) {
-            if (!bullet.isAlive) continue;
-
-            // ✅✅✅ YENİ: ENGEL ÇARPIŞMASI ✅✅✅
-            if (this.obstacleManager) {
-                const bulletPos = new THREE.Vector3(
-                    bullet.mesh.position.x,
-                    0,
-                    bullet.mesh.position.z
-                );
-                
-                if (this.obstacleManager.checkCollision(bulletPos, 0.3)) {
-                    // Metalik duvara çarpma sesi
-                    this.soundManager.playTone(800, 0.05, 'square', 0.3);
-                    
-                    // Mermiyi yok et
-                    bullet.kill();
-                    continue; // Sonraki mermiye geç
+                if (coopWave.zombiesKilled >= coopWave.zombiesToSpawn) {
+                    startNextWave();
                 }
-            }
-            // ✅✅✅ ENGEL KONTROLÜ BİTTİ ✅✅✅
 
-            if (this.enemies.length > 0) {
-                for (const enemy of this.enemies) {
-                    if (!enemy.isAlive) continue;
-
-                    const dx = bullet.mesh.position.x - enemy.mesh.position.x;
-                    const dz = bullet.mesh.position.z - enemy.mesh.position.z;
-                    const dist = Math.sqrt(dx * dx + dz * dz);
-                    const hitRadius = 2.0 * (enemy.mesh.scale.x || 1);
-
-                    if (dist < hitRadius) {
-                        const isCritical = Math.random() < 0.1;
-                        const damage = isCritical ? bullet.damage * 3 : bullet.damage;
-                        if (isCritical) this.soundManager.playCriticalHit();
-
-                        bullet.kill();
-
-                        if (this.mode === 'single') {
-                            enemy.takeDamage(damage);
-                            this.handleLocalEnemyDeath(enemy, damage, isCritical);
-                        }
-                        else if (this.mode === 'coop') {
-                            const popup = new DamagePopup(this.scene, enemy.mesh.position.clone(), damage, isCritical);
-                            this.damagePopups.push(popup);
-
-                            this.socket.emit('damageEnemy', {
-                                id: enemy.id,
-                                damage: damage
-                            });
-                        }
-
-                        break;
-                    }
-                }
-            }
-
-            if (bullet.isAlive && this.mode === 'pvp') {
-                for (const remotePlayer of Object.values(this.remotePlayers)) {
-                    if (!remotePlayer.mesh) continue;
-
-                    const dx = bullet.mesh.position.x - remotePlayer.mesh.position.x;
-                    const dz = bullet.mesh.position.z - remotePlayer.mesh.position.z;
-                    const dist = Math.sqrt(dx * dx + dz * dz);
-
-                    if (dist < 1.0) {
-                        console.log(`🔫 Vurulan Oyuncu: ${remotePlayer.id}`);
-
-                        bullet.kill();
-                        this.soundManager.playPlayerHurt();
-
-                        this.socket.emit('playerHit', {
-                            targetId: remotePlayer.id,
-                            damage: 10
-                        });
-                        
-                        break; // ✅ DURDUR! Tek oyuncuya vur
-                    }
+                if (Math.random() < 0.35) {
+                    const pickupId = `pickup_${pickupIdCounter++}`;
+                    const type = Math.random() < 0.6 ? 'ammo' : 'health';
+                    pickups[pickupId] = {
+                        id: pickupId, x: enemy.x, z: enemy.z, type: type
+                    };
+                    io.to('coop').emit('pickupSpawn', pickups[pickupId]);
                 }
             }
         }
+    });
 
-        if (this.waveManager.enable) {
-            for (const enemy of this.enemies) {
-                if (!enemy.isAlive) continue;
-
-                const dx = enemy.mesh.position.x - this.player.getPosition().x;
-                const dz = enemy.mesh.position.z - this.player.getPosition().z;
-                const distToPlayer = Math.sqrt(dx * dx + dz * dz);
-                const attackRange = (enemy.type === 'boss' ? 3.0 : 1.3) * (enemy.mesh.scale.x || 1);
-
-                if (distToPlayer < attackRange) {
-                    if (!enemy.lastAttackTime || this.clock.getElapsedTime() - enemy.lastAttackTime > 1.0) {
-                        let damage = 10;
-                        if (enemy.type === 'runner') damage = 5;
-                        if (enemy.type === 'tank') damage = 20;
-                        if (enemy.type === 'boss') damage = 40;
-
-                        this.player.takeDamage(damage);
-                        this.soundManager.playPlayerHurt();
-
-                        document.body.style.backgroundColor = "rgba(255, 0, 0, 0.3)";
-                        setTimeout(() => document.body.style.backgroundColor = "", 100);
-
-                        enemy.lastAttackTime = this.clock.getElapsedTime();
-
-                        if (this.player.isDead) {
-                            this.soundManager.playGameOver();
-                            this.uiManager.showGameOver(this.score);
-                            this.isPaused = true;
-                        }
-                    }
-                }
-            }
+    socket.on('playerCollectPickup', (data) => {
+        if (pickups[data.id]) {
+            const type = pickups[data.id].type;
+            delete pickups[data.id];
+            io.to('coop').emit('pickupCollected', {
+                id: data.id, collectorId: socket.id, type: type
+            });
         }
-    }
+    });
 
-    animate() {
-        requestAnimationFrame(() => this.animate());
-        const dt = this.clock.getDelta();
-        this.update(dt);
-        this.renderer.render(this.scene, this.camera);
-    }
-
-    onWindowResize() {
-        const aspect = window.innerWidth / window.innerHeight;
-        this.camera.left = -this.config.viewSize * aspect;
-        this.camera.right = this.config.viewSize * aspect;
-        this.camera.top = this.config.viewSize;
-        this.camera.bottom = -this.config.viewSize;
-        this.camera.updateProjectionMatrix();
-        this.renderer.setSize(window.innerWidth, window.innerHeight);
-    }
-
-    addRemotePlayer(playerInfo) {
-        const remotePlayer = new RemotePlayer(this.scene, playerInfo);
-        this.remotePlayers[playerInfo.id] = remotePlayer;
-    }
-
-    spawnRemoteZombie(data) {
-        if (this.enemies.find(e => e.id === data.id)) return;
-        console.log(`🧟 Zombi Doğdu (Remote): ${data.id} at ${data.x}, ${data.z}`);
-        const enemy = new Enemy(this.scene, new THREE.Vector3(data.x, data.y, data.z), data.type);
-        enemy.id = data.id;
-        this.enemies.push(enemy);
-    }
-
-    handleLocalEnemyDeath(enemy, damage, isCritical) {
-        const popup = new DamagePopup(this.scene, enemy.mesh.position.clone(), damage, isCritical);
-        this.damagePopups.push(popup);
-
-        if (enemy.health <= 0) {
-            this.soundManager.playZombieDeath();
-            this.waveManager.onEnemyKilled();
-            this.score += 10;
-            if (enemy.type === 'tank') this.score += 30;
-            if (enemy.type === 'boss') this.score += 100;
-
-            if (Math.random() < 0.3) {
-                const type = Math.random() < 0.6 ? 'ammo' : 'health';
-                const pickup = new Pickup(this.scene, enemy.mesh.position.clone(), type);
-                this.pickups.push(pickup);
-            }
+    socket.on('disconnect', () => {
+        const player = players[socket.id];
+        if (player) {
+            console.log(`🔴 Çıkış: ${player.name}`);
+            socket.to(player.room).emit('playerDisconnected', socket.id);
+            delete players[socket.id];
         }
-    }
+    });
+});
+
+function startNextWave() {
+    coopWave.current++;
+    coopWave.zombiesToSpawn += 5;
+    coopWave.zombiesSpawned = 0;
+    coopWave.zombiesKilled = 0;
+    coopWave.spawnRate = Math.max(0.3, 2.0 - (coopWave.current * 0.15));
+
+    console.log(`🎉 COOP Dalga ${coopWave.current} Başlıyor!`);
+
+    io.to('coop').emit('waveComplete', { nextWave: coopWave.current });
+    io.to('coop').emit('waveUpdate', {
+        wave: coopWave.current,
+        remaining: coopWave.zombiesToSpawn
+    });
 }
+
+// --- SUNUCU OYUN DÖNGÜSÜ ---
+setInterval(() => {
+    const coopPlayers = Object.values(players).filter(p => p.room === 'coop' && !p.isDead);
+
+    // ✅ PAUSE KONTROLÜ
+    if (roomPauseStatus.coop) {
+        return; // Oyun duraklatıldı, hiçbir şey yapma
+    }
+
+    // ✅ EN AZ 2 OYUNCU KONTROLÜ
+    if (coopPlayers.length >= 2) {
+        if (coopWave.zombiesSpawned < coopWave.zombiesToSpawn) {
+            coopWave.spawnTimer += 1/15;
+
+            if (coopWave.spawnTimer >= coopWave.spawnRate) {
+                coopWave.spawnTimer = 0;
+
+                const id = `zombie_${enemyIdCounter++}`;
+                const randomPlayer = coopPlayers[Math.floor(Math.random() * coopPlayers.length)];
+
+                // ✅ DÜZELTİLDİ: Harita sınırlarından doğ
+                const mapSize = 150;
+                const halfSize = mapSize / 2 - 5;
+                
+                let x, z;
+                const side = Math.floor(Math.random() * 4);
+                
+                switch(side) {
+                    case 0: // Kuzey
+                        x = (Math.random() - 0.5) * mapSize;
+                        z = -halfSize;
+                        break;
+                    case 1: // Güney
+                        x = (Math.random() - 0.5) * mapSize;
+                        z = halfSize;
+                        break;
+                    case 2: // Batı
+                        x = -halfSize;
+                        z = (Math.random() - 0.5) * mapSize;
+                        break;
+                    case 3: // Doğu
+                        x = halfSize;
+                        z = (Math.random() - 0.5) * mapSize;
+                        break;
+                }
+
+                let type = 'normal';
+                const r = Math.random();
+                if (coopWave.current >= 2 && r > 0.7) type = 'runner';
+                if (coopWave.current >= 4 && r > 0.9) type = 'tank';
+                if (coopWave.current % 5 === 0 && coopWave.zombiesSpawned === 0) type = 'boss';
+
+                const stats = ZOMBIE_TYPES[type];
+                enemies[id] = {
+                    id: id, x: x, y: 0, z: z,
+                    type: type, hp: stats.hp, maxHp: stats.hp,
+                    speed: stats.speed, damage: stats.damage, range: stats.range,
+                    lastAttackTime: 0,
+                    isDead: false
+                };
+
+                io.to('coop').emit('enemySpawn', enemies[id]);
+                coopWave.zombiesSpawned++;
+
+                io.to('coop').emit('waveUpdate', {
+                    wave: coopWave.current,
+                    remaining: coopWave.zombiesToSpawn - coopWave.zombiesKilled
+                });
+            }
+        }
+
+        // AI UPDATE & AGGRO
+        const currentTime = Date.now();
+        const enemyList = Object.values(enemies);
+
+        enemyList.forEach(enemy => {
+            if (enemy.isDead) return;
+
+            let nearestPlayer = null;
+            let minDist = Infinity;
+
+            for (const p of coopPlayers) {
+                const d = getDistance(enemy, p);
+                if (d < minDist) {
+                    minDist = d;
+                    nearestPlayer = p;
+                }
+            }
+
+            if (nearestPlayer) {
+                const attackRange = enemy.range;
+
+                if (minDist <= attackRange) {
+                    if (currentTime - enemy.lastAttackTime > 1000) {
+                        enemy.lastAttackTime = currentTime;
+                        io.to('coop').emit('playerDamaged', {
+                            id: nearestPlayer.id,
+                            damage: enemy.damage,
+                            attackerId: enemy.id
+                        });
+                    }
+                } else {
+                    const dx = nearestPlayer.x - enemy.x;
+                    const dz = nearestPlayer.z - enemy.z;
+
+                    if (minDist > 0.1) {
+                        const dirX = dx / minDist;
+                        const dirZ = dz / minDist;
+                        const speed = enemy.speed;
+
+                        if (!isColliding(enemy.x + dirX * speed, enemy.z, 0.8)) {
+                            enemy.x += dirX * speed;
+                        }
+
+                        if (!isColliding(enemy.x, enemy.z + dirZ * speed, 0.8)) {
+                            enemy.z += dirZ * speed;
+                        }
+
+                        enemy.rotation = Math.atan2(dx, dz);
+                    }
+                }
+            }
+        });
+
+        io.to('coop').emit('enemyUpdate', enemies);
+    }
+}, 1000 / 15);
+
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => {
+    console.log(`🚀 Sunucu ${PORT} portunda çalışıyor!`);
+});
