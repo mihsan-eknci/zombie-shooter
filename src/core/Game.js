@@ -594,8 +594,8 @@ export class Game {
             }
 
             if (bullet.isAlive && this.mode === 'pvp') {
-                Object.values(this.remotePlayers).forEach(remotePlayer => {
-                    if (!remotePlayer.mesh) return;
+                for (const remotePlayer of Object.values(this.remotePlayers)) {
+                    if (!remotePlayer.mesh) continue;
 
                     const dx = bullet.mesh.position.x - remotePlayer.mesh.position.x;
                     const dz = bullet.mesh.position.z - remotePlayer.mesh.position.z;
@@ -611,8 +611,10 @@ export class Game {
                             targetId: remotePlayer.id,
                             damage: 10
                         });
+                        
+                        break; // ✅ DURDUR! Tek oyuncuya vur
                     }
-                });
+                }
             }
         }
 
